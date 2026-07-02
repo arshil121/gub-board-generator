@@ -640,7 +640,7 @@ function Stat({n,label}){ return <div className="stat"><b>{n}</b><span className
 /* =======================================================================
    ADMIN  WIZARD
    ======================================================================= */
-function Admin({store,setStore,onExit,saveState,visible,onToggleVisible}){
+function Admin({store,setStore,onExit,saveState,visible,onToggleVisible,onRename}){
   // The semester is already chosen (via SemesterPicker) before Admin mounts,
   // so we start at the first real step. Step is remembered in the store.
   const [step,setStep]=useState(()=> store.adminStep && store.adminStep>=1 ? store.adminStep : 1);
@@ -648,12 +648,40 @@ function Admin({store,setStore,onExit,saveState,visible,onToggleVisible}){
 
   const goStep=(n)=>{ setStep(n); setStore(s=>({...s,adminStep:n})); };
 
+  // --- rename (display name only; the slug / student link never changes) ---
+  const [editingName,setEditingName]=useState(false);
+  const [nameDraft,setNameDraft]=useState(store.semester||"");
+  const [renaming,setRenaming]=useState(false);
+  const commitRename=async ()=>{
+    const nm=nameDraft.trim();
+    if(!nm || nm===store.semester){ setEditingName(false); setNameDraft(store.semester||""); return; }
+    setRenaming(true);
+    const ok=await onRename(nm);
+    setRenaming(false);
+    if(ok){ setStore(s=>({...s,semester:nm})); setEditingName(false); }
+    else { setNameDraft(store.semester||""); }
+  };
+
   return (
     <div className="wrap" style={{padding:"26px 22px 80px"}}>
       <div className="eyebrow">Admin workspace</div>
       <h1 style={{fontSize:30,margin:"6px 0 2px"}}>Defense board builder</h1>
       <div style={{marginTop:4,display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
-        <span className="muted ui">Semester: <b>{store.semester}</b></span>
+        {editingName ? (
+          <span style={{display:"inline-flex",alignItems:"center",gap:8}}>
+            <input autoFocus value={nameDraft} disabled={renaming}
+              onChange={e=>setNameDraft(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter") commitRename(); if(e.key==="Escape"){ setEditingName(false); setNameDraft(store.semester||""); } }}
+              style={{fontSize:14,padding:"6px 10px"}} />
+            <button className="btn" style={{padding:"7px 12px",fontSize:13}} onClick={commitRename} disabled={renaming||!nameDraft.trim()}>{renaming?"Saving…":"Save"}</button>
+            <button className="linkbtn" onClick={()=>{ setEditingName(false); setNameDraft(store.semester||""); }}>Cancel</button>
+          </span>
+        ) : (
+          <span className="muted ui" style={{display:"inline-flex",alignItems:"center",gap:8}}>
+            Semester: <b>{store.semester}</b>
+            <button className="linkbtn" onClick={()=>{ setNameDraft(store.semester||""); setEditingName(true); }}>rename</button>
+          </span>
+        )}
         <button className="linkbtn" onClick={onExit}>← All semesters</button>
         <label className="ui" style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:13,marginLeft:"auto",cursor:"pointer"}}>
           <input type="checkbox" checked={!!visible} onChange={e=>onToggleVisible(e.target.checked)} />
@@ -1759,6 +1787,17 @@ function AdminWorkspace(){
     if(error){ setVisible(!v); alert("Couldn't update visibility: "+error.message); }
   };
 
+  // Rename the display name only. The slug (primary key + student link) stays
+  // fixed, so existing links and all saved data remain valid. Also mirrors the
+  // new name into the published snapshot's implicit label via the name column.
+  const renameSemester=async (newName)=>{
+    const {error}=await sb.from("semesters")
+      .update({name:newName, updated_at:new Date().toISOString()})
+      .eq("slug",slug);
+    if(error){ alert("Rename failed: "+error.message); return false; }
+    return true;
+  };
+
   if(!slug){
     return <SemesterPicker onOpen={setSlug} />;
   }
@@ -1780,6 +1819,7 @@ function AdminWorkspace(){
       onExit={()=>{ clearTimeout(saveTimer.current); setSlug(null); }}
       saveState={saveState}
       visible={visible} onToggleVisible={toggleVisible}
+      onRename={renameSemester}
     />
   );
 }
