@@ -44,6 +44,7 @@
     padding:7px 16px;border-radius:999px;font:600 13px/1 ui-sans-serif}
   .seg button.on{background:var(--moss);color:#fff;box-shadow:var(--shadow)}
   .reset-mini{display:none} /* desktop: full "Reset data" label; mobile media query flips this */
+  .saveflag{font:600 12px/1 ui-sans-serif;color:var(--muted)}
 
   /* generic */
   h1,h2,h3{font-weight:600;letter-spacing:-.01em;margin:0}
@@ -639,55 +640,29 @@ function Stat({n,label}){ return <div className="stat"><b>{n}</b><span className
 /* =======================================================================
    ADMIN  WIZARD
    ======================================================================= */
-function Admin({store,setStore}){
-  // Resume where the admin left off — don't re-ask for the semester name
-  // on every reload if one is already saved in the store.
-  const [step,setStep]=useState(()=> store.semester ? (store.adminStep||1) : 0);
-  const [semDraft,setSemDraft]=useState(store.semester||"");
+function Admin({store,setStore,onExit,saveState,visible,onToggleVisible}){
+  // The semester is already chosen (via SemesterPicker) before Admin mounts,
+  // so we start at the first real step. Step is remembered in the store.
+  const [step,setStep]=useState(()=> store.adminStep && store.adminStep>=1 ? store.adminStep : 1);
   const steps=["Import groups","Faculty & tiers","Board config","Slots & dates","Generate"];
 
-  // Wrapper that also persists the current step, so a refresh resumes here.
   const goStep=(n)=>{ setStep(n); setStore(s=>({...s,adminStep:n})); };
-
-  // Semester gate: name the semester before starting the generator.
-  if(step===0){
-    return (
-      <div className="wrap" style={{padding:"26px 22px 80px"}}>
-        <div className="eyebrow">Admin workspace</div>
-        <h1 style={{fontSize:30,margin:"6px 0 2px"}}>Defense board builder</h1>
-        <p className="muted ui" style={{marginTop:4,marginBottom:22}}>Start by naming the semester you're generating boards for.</p>
-        <div className="card pad" style={{maxWidth:520}}>
-          <div className="field">
-            <label>Semester name</label>
-            <input autoFocus value={semDraft} placeholder="e.g. Spring 2026"
-              onChange={e=>setSemDraft(e.target.value)}
-              onKeyDown={e=>{ if(e.key==="Enter"&&semDraft.trim()){ setStore(s=>({...s,semester:semDraft.trim()})); goStep(1);} }}/>
-          </div>
-          <p className="note" style={{marginTop:10}}>
-            This is what students pick from on the public portal. You can run a fresh generation per semester;
-            each publishes under its own name.
-          </p>
-          <div className="toolbar">
-            <button className="btn" style={{marginLeft:"auto"}} disabled={!semDraft.trim()}
-              onClick={()=>{ setStore(s=>({...s,semester:semDraft.trim()})); goStep(1); }}>
-              Start generator →
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="wrap" style={{padding:"26px 22px 80px"}}>
       <div className="eyebrow">Admin workspace</div>
       <h1 style={{fontSize:30,margin:"6px 0 2px"}}>Defense board builder</h1>
-      <p className="muted ui" style={{marginTop:4}}>
-        Semester: <b>{store.semester}</b>
-        <button className="linkbtn" onClick={()=>goStep(0)}>change</button>
-      </p>
+      <div style={{marginTop:4,display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+        <span className="muted ui">Semester: <b>{store.semester}</b></span>
+        <button className="linkbtn" onClick={onExit}>← All semesters</button>
+        <label className="ui" style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:13,marginLeft:"auto",cursor:"pointer"}}>
+          <input type="checkbox" checked={!!visible} onChange={e=>onToggleVisible(e.target.checked)} />
+          Visible to students
+        </label>
+        <span className="saveflag">{saveState}</span>
+      </div>
 
-      <div className="steps">
+      <div className="steps" style={{marginTop:18}}>
         {steps.map((s,i)=>(
           <div key={s} className={"step "+(step===i+1?"on":step>i+1?"done":"")} onClick={()=>goStep(i+1)}>
             <span className="n">{i+1}</span>{s}
@@ -1038,15 +1013,14 @@ function StepGenerate({store,setStore}){
     };
     const slug=slugify(store.semester);
 
-    const {error}=await sb.from("published_semesters").upsert(
-      {slug, semester:store.semester, data:snap, updated_at:new Date().toISOString()},
-      {onConflict:"slug"}
-    );
+    const {error}=await sb.from("semesters").update(
+      {published:snap, visible:true, updated_at:new Date().toISOString()}
+    ).eq("slug",slug);
 
     setPublishing(false);
     if(error){ setPublishErr(error.message||"Publish failed."); return; }
 
-    setStore(s=>({...s,published:{...s.published,[s.semester]:snap},dirty:false}));
+    setStore(s=>({...s,dirty:false}));
     setJustPublished(true);
   };
 
@@ -1124,7 +1098,7 @@ function StepGenerate({store,setStore}){
               <b>Published "{store.semester}".</b>
               <code style={{background:"var(--moss-100)",padding:"4px 8px",borderRadius:6,fontSize:13}}>{location.origin}{location.pathname}</code>
               <button className="btn ghost" onClick={()=>{navigator.clipboard.writeText(location.origin+location.pathname);}}>Copy site link</button>
-              <span className="note">Students open this one link, click "Student portal", and pick "{store.semester}" from the list. Re-publishing this semester updates the same entry — nothing to re-share.</span>
+              <span className="note">Now visible to students. They open this link, pick "{store.semester}", and see the boards. Re-publishing updates the same entry. Uncheck "Visible to students" above to hide it again.</span>
             </div>
           )}
 
@@ -1536,15 +1510,18 @@ function PublicPortal(){
   const [boardStatus,setBoardStatus]=useState("idle"); // idle | loading | ok | error
   const [q,setQ]=useState("");
 
-  // Load the list of published semesters (light query — no board data yet).
+  // Load the list of visible semesters (light query — no board data yet).
+  // RLS only returns rows where visible=true, so hidden/draft-only semesters
+  // never reach students. We also require a non-null published snapshot.
   useEffect(()=>{
     let cancelled=false;
-    sb.from("published_semesters").select("slug,semester").order("updated_at",{ascending:false})
+    sb.from("semesters").select("slug,name").eq("visible",true).not("published","is",null).order("updated_at",{ascending:false})
       .then(({data,error})=>{
         if(cancelled) return;
         if(error){ setStatus("error"); return; }
-        setList(data||[]);
-        setStatus((data&&data.length)?"ok":"empty");
+        const rows=(data||[]).map(r=>({slug:r.slug,semester:r.name}));
+        setList(rows);
+        setStatus(rows.length?"ok":"empty");
       })
       .catch(()=>{ if(!cancelled) setStatus("error"); });
     return ()=>{ cancelled=true; };
@@ -1555,11 +1532,11 @@ function PublicPortal(){
     if(!sem) return;
     let cancelled=false;
     setBoardStatus("loading");
-    sb.from("published_semesters").select("data").eq("slug",sem.slug).single()
+    sb.from("semesters").select("published").eq("slug",sem.slug).single()
       .then(({data,error})=>{
         if(cancelled) return;
-        if(error||!data){ setBoardStatus("error"); return; }
-        setBoardData(data.data); setBoardStatus("ok");
+        if(error||!data||!data.published){ setBoardStatus("error"); return; }
+        setBoardData(data.published); setBoardStatus("ok");
       })
       .catch(()=>{ if(!cancelled) setBoardStatus("error"); });
     return ()=>{ cancelled=true; };
@@ -1630,6 +1607,180 @@ function PublicPortal(){
       )}
       <Footer/>
     </div>
+  );
+}
+
+/* =======================================================================
+   ADMIN  WORKSPACE  —  semester picker + per-semester state in Supabase
+   After login the admin sees a list of existing semesters (or creates a
+   new one). Selecting one loads its full working state from the `semesters`
+   table; every change auto-saves back (debounced). Nothing lives only in
+   localStorage anymore, so the admin can continue from any machine.
+   ======================================================================= */
+function makeDefaultState(name){
+  return {
+    semester:name,
+    groups:[],
+    rawSheets:null,
+    onlyConfirmed:false,
+    faculty:FACULTY.map(f=>({...f})),
+    tierOverrides:{},
+    config:{ targetGroupCount:4, evaluatorCount:2,
+      slots:[{id:"S1",label:"9:00am – 12:00pm",date:""},{id:"S2",label:"2:00pm – 5:00pm",date:""}] },
+    result:null,
+    dirty:false,
+    adminStep:1,
+  };
+}
+
+function SemesterPicker({onOpen}){
+  const [status,setStatus]=useState("loading"); // loading | ok | error
+  const [rows,setRows]=useState([]);            // [{slug,name,visible,published}]
+  const [newName,setNewName]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [err,setErr]=useState("");
+
+  const load=()=>{
+    setStatus("loading");
+    sb.from("semesters").select("slug,name,visible,published").order("updated_at",{ascending:false})
+      .then(({data,error})=>{
+        if(error){ setStatus("error"); return; }
+        setRows(data||[]); setStatus("ok");
+      })
+      .catch(()=>setStatus("error"));
+  };
+  useEffect(load,[]);
+
+  const create=async ()=>{
+    const name=newName.trim(); if(!name||busy) return;
+    setBusy(true); setErr("");
+    const slug=slugify(name);
+    const {error}=await sb.from("semesters").insert(
+      {slug, name, state:makeDefaultState(name), visible:false}
+    );
+    setBusy(false);
+    if(error){
+      setErr(error.code==="23505" ? "A semester with that name already exists." : (error.message||"Could not create semester."));
+      return;
+    }
+    setNewName("");
+    onOpen(slug);
+  };
+
+  const remove=async (slug,name)=>{
+    if(!window.confirm(`Delete "${name}" and all its data? This cannot be undone.`)) return;
+    const {error}=await sb.from("semesters").delete().eq("slug",slug);
+    if(error){ alert("Delete failed: "+error.message); return; }
+    load();
+  };
+
+  return (
+    <div className="wrap" style={{padding:"26px 22px 80px",maxWidth:720}}>
+      <div className="eyebrow">Admin workspace</div>
+      <h1 style={{fontSize:30,margin:"6px 0 16px"}}>Semesters</h1>
+
+      <div className="card pad" style={{marginBottom:18}}>
+        <h2 style={{fontSize:16,marginBottom:10}}>Create a new semester</h2>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <input style={{flex:"1 1 240px"}} value={newName} placeholder="e.g. Spring 2026"
+            onChange={e=>setNewName(e.target.value)}
+            onKeyDown={e=>{ if(e.key==="Enter") create(); }} />
+          <button className="btn" onClick={create} disabled={!newName.trim()||busy}>{busy?"Creating…":"Create & open"}</button>
+        </div>
+        {err && <p className="note" style={{color:"var(--clay)",marginTop:10}}>{err}</p>}
+      </div>
+
+      <h2 style={{fontSize:16,margin:"0 0 10px"}}>Existing semesters</h2>
+      {status==="loading" && <div className="card empty">Loading…</div>}
+      {status==="error" && <div className="card empty">Couldn't load semesters. Refresh to try again.</div>}
+      {status==="ok" && !rows.length && <div className="card empty">No semesters yet. Create one above.</div>}
+      {status==="ok" && rows.map(r=>(
+        <div key={r.slug} className="card pad" style={{marginBottom:10,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+          <div>
+            <div style={{font:"700 16px/1.3 ui-sans-serif"}}>{r.name}</div>
+            <div className="note">
+              {r.published ? "Published" : "Draft only"} · {r.visible ? "visible to students" : "hidden"}
+            </div>
+          </div>
+          <div style={{marginLeft:"auto",display:"flex",gap:8}}>
+            <button className="btn" onClick={()=>onOpen(r.slug)}>Open</button>
+            <button className="btn ghost" style={{color:"var(--clay)",borderColor:"#e6c3ad"}} onClick={()=>remove(r.slug,r.name)}>Delete</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AdminWorkspace(){
+  const [slug,setSlug]=useState(null);          // open semester slug, or null = picker
+  const [store,setStore]=useState(null);        // loaded working state
+  const [visible,setVisible]=useState(false);
+  const [loadStatus,setLoadStatus]=useState("idle"); // idle|loading|ok|error
+  const [saveState,setSaveState]=useState("");  // "Saved" | "Saving…" | "Save failed"
+  const saveTimer=useRef(null);
+  const skipNextSave=useRef(false);             // don't save immediately after loading
+
+  // Load a semester's full state when one is opened.
+  useEffect(()=>{
+    if(!slug){ setStore(null); return; }
+    setLoadStatus("loading");
+    sb.from("semesters").select("name,state,visible").eq("slug",slug).single()
+      .then(({data,error})=>{
+        if(error||!data){ setLoadStatus("error"); return; }
+        skipNextSave.current=true;
+        const st=data.state && data.state.semester ? data.state : makeDefaultState(data.name);
+        st.semester=data.name; // keep name authoritative
+        setStore(st);
+        setVisible(!!data.visible);
+        setLoadStatus("ok");
+      })
+      .catch(()=>setLoadStatus("error"));
+  },[slug]);
+
+  // Debounced auto-save of the working state on every change.
+  useEffect(()=>{
+    if(!slug || !store) return;
+    if(skipNextSave.current){ skipNextSave.current=false; return; }
+    setSaveState("Saving…");
+    clearTimeout(saveTimer.current);
+    saveTimer.current=setTimeout(async ()=>{
+      const {error}=await sb.from("semesters")
+        .update({state:store, updated_at:new Date().toISOString()})
+        .eq("slug",slug);
+      setSaveState(error ? "Save failed" : "Saved");
+    },800);
+    return ()=>clearTimeout(saveTimer.current);
+  },[store,slug]);
+
+  const toggleVisible=async (v)=>{
+    setVisible(v);
+    const {error}=await sb.from("semesters").update({visible:v,updated_at:new Date().toISOString()}).eq("slug",slug);
+    if(error){ setVisible(!v); alert("Couldn't update visibility: "+error.message); }
+  };
+
+  if(!slug){
+    return <SemesterPicker onOpen={setSlug} />;
+  }
+  if(loadStatus==="loading"||!store){
+    return <div className="wrap" style={{padding:"60px 22px"}}><div className="card empty">Loading semester…</div></div>;
+  }
+  if(loadStatus==="error"){
+    return (
+      <div className="wrap" style={{padding:"60px 22px"}}>
+        <div className="card empty">Couldn't load this semester.
+          <div style={{marginTop:12}}><button className="btn ghost" onClick={()=>setSlug(null)}>← Back to semesters</button></div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <Admin
+      store={store} setStore={setStore}
+      onExit={()=>{ clearTimeout(saveTimer.current); setSlug(null); }}
+      saveState={saveState}
+      visible={visible} onToggleVisible={toggleVisible}
+    />
   );
 }
 
@@ -1707,40 +1858,10 @@ function AdminGate({children}){
    ROOT
    ======================================================================= */
 function App(){
-  const [tab,setTab]=useState("portal"); // default to the student view for the shared link
-  const DEFAULT_STORE={
-    semester:"Spring 2026",
-    groups:[],
-    rawSheets:null,
-    onlyConfirmed:false,
-    faculty:FACULTY.map(f=>({...f})),
-    tierOverrides:{},
-    config:{ targetGroupCount:4, evaluatorCount:2,
-      slots:[{id:"S1",label:"9:00am – 12:00pm",date:""},{id:"S2",label:"2:00pm – 5:00pm",date:""}] },
-    result:null,
-    published:{},
-    adminStep:0,
-  };
-  // Persist the admin's working session to localStorage so a refresh keeps
-  // imported groups, roster edits, and the working draft. This is local to
-  // the admin's own browser — it has no effect on what students see, which
-  // comes straight from Supabase via PublicPortal.
-  const STORAGE_KEY="gub-board-generator/v1";
-  const [store,setStore]=useState(()=>{
-    try{
-      const saved=localStorage.getItem(STORAGE_KEY);
-      if(saved)return {...DEFAULT_STORE,...JSON.parse(saved)};
-    }catch(e){/* private mode / corrupt -> fall back to defaults */}
-    return DEFAULT_STORE;
-  });
-  React.useEffect(()=>{
-    try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(store)); }catch(e){}
-  },[store]);
-  const resetAll=()=>{
-    if(!window.confirm("Clear ALL saved data (import, roster edits, drafts, and published semesters)? This cannot be undone."))return;
-    try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
-    setStore({...DEFAULT_STORE,faculty:FACULTY.map(f=>({...f}))});
-  };
+  // Routing: the plain URL is the student portal (no admin tab visible at all).
+  // The admin panel lives at ?admin — still protected by login + RLS, this
+  // just keeps it out of sight for students.
+  const isAdmin = new URLSearchParams(location.search).has("admin");
 
   return (
     <div>
@@ -1755,19 +1876,13 @@ function App(){
             </span>
             <span>Board Generator<small>GUB · CSE Department</small></span>
           </div>
-          <div className="seg ui">
-            <button className={tab==="portal"?"on":""} onClick={()=>setTab("portal")}>Student portal</button>
-            <button className={tab==="admin"?"on":""} onClick={()=>setTab("admin")}>Admin</button>
-          </div>
-          {tab==="admin" && (
-            <button className="btn ghost ui" style={{marginLeft:10,fontSize:12,padding:"6px 10px"}} onClick={resetAll} title="Clear all saved data">
-              <span className="reset-full">Reset data</span><span className="reset-mini">↺</span>
-            </button>
+          {isAdmin && (
+            <span className="pill ui" style={{marginLeft:"auto",fontSize:12}}>Admin</span>
           )}
         </div>
       </div>
-      {tab==="admin"
-        ? <AdminGate><Admin store={store} setStore={setStore} /></AdminGate>
+      {isAdmin
+        ? <AdminGate><AdminWorkspace /></AdminGate>
         : <PublicPortal />}
     </div>
   );
