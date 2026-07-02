@@ -640,9 +640,14 @@ function Stat({n,label}){ return <div className="stat"><b>{n}</b><span className
    ADMIN  WIZARD
    ======================================================================= */
 function Admin({store,setStore}){
-  const [step,setStep]=useState(0);   // 0 = semester gate
+  // Resume where the admin left off — don't re-ask for the semester name
+  // on every reload if one is already saved in the store.
+  const [step,setStep]=useState(()=> store.semester ? (store.adminStep||1) : 0);
   const [semDraft,setSemDraft]=useState(store.semester||"");
   const steps=["Import groups","Faculty & tiers","Board config","Slots & dates","Generate"];
+
+  // Wrapper that also persists the current step, so a refresh resumes here.
+  const goStep=(n)=>{ setStep(n); setStore(s=>({...s,adminStep:n})); };
 
   // Semester gate: name the semester before starting the generator.
   if(step===0){
@@ -656,7 +661,7 @@ function Admin({store,setStore}){
             <label>Semester name</label>
             <input autoFocus value={semDraft} placeholder="e.g. Spring 2026"
               onChange={e=>setSemDraft(e.target.value)}
-              onKeyDown={e=>{ if(e.key==="Enter"&&semDraft.trim()){ setStore(s=>({...s,semester:semDraft.trim()})); setStep(1);} }}/>
+              onKeyDown={e=>{ if(e.key==="Enter"&&semDraft.trim()){ setStore(s=>({...s,semester:semDraft.trim()})); goStep(1);} }}/>
           </div>
           <p className="note" style={{marginTop:10}}>
             This is what students pick from on the public portal. You can run a fresh generation per semester;
@@ -664,7 +669,7 @@ function Admin({store,setStore}){
           </p>
           <div className="toolbar">
             <button className="btn" style={{marginLeft:"auto"}} disabled={!semDraft.trim()}
-              onClick={()=>{ setStore(s=>({...s,semester:semDraft.trim()})); setStep(1); }}>
+              onClick={()=>{ setStore(s=>({...s,semester:semDraft.trim()})); goStep(1); }}>
               Start generator →
             </button>
           </div>
@@ -679,21 +684,21 @@ function Admin({store,setStore}){
       <h1 style={{fontSize:30,margin:"6px 0 2px"}}>Defense board builder</h1>
       <p className="muted ui" style={{marginTop:4}}>
         Semester: <b>{store.semester}</b>
-        <button className="linkbtn" onClick={()=>setStep(0)}>change</button>
+        <button className="linkbtn" onClick={()=>goStep(0)}>change</button>
       </p>
 
       <div className="steps">
         {steps.map((s,i)=>(
-          <div key={s} className={"step "+(step===i+1?"on":step>i+1?"done":"")} onClick={()=>setStep(i+1)}>
+          <div key={s} className={"step "+(step===i+1?"on":step>i+1?"done":"")} onClick={()=>goStep(i+1)}>
             <span className="n">{i+1}</span>{s}
           </div>
         ))}
       </div>
 
-      {step===1 && <StepImport store={store} setStore={setStore} next={()=>setStep(2)} />}
-      {step===2 && <StepTiers store={store} setStore={setStore} next={()=>setStep(3)} />}
-      {step===3 && <StepConfig store={store} setStore={setStore} next={()=>setStep(4)} />}
-      {step===4 && <StepSlots store={store} setStore={setStore} next={()=>setStep(5)} />}
+      {step===1 && <StepImport store={store} setStore={setStore} next={()=>goStep(2)} />}
+      {step===2 && <StepTiers store={store} setStore={setStore} next={()=>goStep(3)} />}
+      {step===3 && <StepConfig store={store} setStore={setStore} next={()=>goStep(4)} />}
+      {step===4 && <StepSlots store={store} setStore={setStore} next={()=>goStep(5)} />}
       {step===5 && <StepGenerate store={store} setStore={setStore} />}
     </div>
   );
@@ -1020,12 +1025,13 @@ function StepGenerate({store,setStore}){
 
   const [publishing,setPublishing]=useState(false);
   const [publishErr,setPublishErr]=useState("");
-  const [publishedLink,setPublishedLink]=useState("");
+  const [justPublished,setJustPublished]=useState(false);
 
   const publish=async ()=>{
     if(!store.result || publishing) return;
     setPublishing(true);
     setPublishErr("");
+    setJustPublished(false);
     const snap={
       boards:store.result.boards.map(b=>({...b,groups:b.groups.map(g=>({...g})),evaluators:b.evaluators.map(e=>({...e}))})),
       temporary:store.result.temporary.map(t=>({...t,group:{...t.group}})),
@@ -1041,8 +1047,7 @@ function StepGenerate({store,setStore}){
     if(error){ setPublishErr(error.message||"Publish failed."); return; }
 
     setStore(s=>({...s,published:{...s.published,[s.semester]:snap},dirty:false}));
-    const link=`${location.origin}${location.pathname}?view=${slug}`;
-    setPublishedLink(link);
+    setJustPublished(true);
   };
 
   // Export the current draft to a multi-sheet .xlsx (admin view, with
@@ -1114,12 +1119,12 @@ function StepGenerate({store,setStore}){
               Publish failed: {publishErr}
             </div>
           )}
-          {publishedLink && (
+          {justPublished && (
             <div className="card pad" style={{marginTop:12,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-              <b>Share this link with students</b>
-              <code style={{background:"var(--moss-100)",padding:"4px 8px",borderRadius:6,fontSize:13}}>{publishedLink}</code>
-              <button className="btn ghost" onClick={()=>{navigator.clipboard.writeText(publishedLink);}}>Copy link</button>
-              <span className="note">This link stays the same every time you re-publish "{store.semester}".</span>
+              <b>Published "{store.semester}".</b>
+              <code style={{background:"var(--moss-100)",padding:"4px 8px",borderRadius:6,fontSize:13}}>{location.origin}{location.pathname}</code>
+              <button className="btn ghost" onClick={()=>{navigator.clipboard.writeText(location.origin+location.pathname);}}>Copy site link</button>
+              <span className="note">Students open this one link, click "Student portal", and pick "{store.semester}" from the list. Re-publishing this semester updates the same entry — nothing to re-share.</span>
             </div>
           )}
 
@@ -1518,102 +1523,50 @@ function BoardList({boards,temporary,admin,onRoom}){
 /* =======================================================================
    STUDENT  /  PUBLIC  PORTAL
    ======================================================================= */
-function Portal({store}){
-  const semesters=Object.keys(store.published);
-  const [sem,setSem]=useState("");          // empty = no semester chosen yet (gate)
-  const [q,setQ]=useState("");
-  const data=sem?store.published[sem]:null;
-
-  const filtered=useMemo(()=>{
-    if(!data) return null;
-    const needle=q.trim().toLowerCase();
-    const match=(b)=>{
-      if(!needle) return true;
-      const hay=[boardLabel(b.boardId),b.room,...b.evaluators.map(e=>e.name),
-        ...b.groups.flatMap(g=>[g.title,...(g.students||[])])]
-        .join(" ").toLowerCase();
-      return hay.includes(needle);
-    };
-    return {boards:data.boards.filter(match)};
-  },[data,q]);
-
-  const Footer=()=>(
-    <div className="footer">
-      <div><b>Md. Shoab Alam (Lecturer)</b> · CSE Department, Green University of Bangladesh</div>
-      <div>📞 <a href="tel:01869116828">01869116828</a> · ✉ <a href="mailto:shoab@cse.green.edu.bd">shoab@cse.green.edu.bd</a></div>
-    </div>
-  );
-
-  return (
-    <div className="wrap" style={{padding:"30px 22px 80px"}}>
-      <div className="eyebrow">Student &amp; faculty portal</div>
-      <h1 style={{fontSize:30,margin:"6px 0 14px"}}>Defense schedule</h1>
-
-      {!semesters.length ? (
-        <>
-          <div className="card empty">No schedules published yet. Generate one in the Admin tab.</div>
-          <Footer/>
-        </>
-      ) : !sem ? (
-        // --- semester selection gate ---
-        <>
-          <div className="card pad">
-            <h2 style={{fontSize:18,marginBottom:6}}>Select a semester</h2>
-            <p className="note" style={{marginBottom:16}}>Choose which semester's defense schedule you'd like to view.</p>
-            <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-              {semesters.map(s=>(
-                <button key={s} className="btn" style={{fontSize:15,padding:"12px 20px"}} onClick={()=>setSem(s)}>{s}</button>
-              ))}
-            </div>
-          </div>
-          <Footer/>
-        </>
-      ) : (
-        <>
-          <div className="search">
-            <button className="btn ghost" onClick={()=>{setSem("");setQ("");}} title="Choose a different semester">← Semesters</button>
-            <span className="pill" style={{alignSelf:"center",padding:"6px 12px",fontSize:14}}>{sem}</span>
-            <input placeholder="Search by Student ID, name, title, or room…" value={q} onChange={e=>setQ(e.target.value)} />
-          </div>
-          {filtered.boards.length
-            ? <BoardList boards={filtered.boards} temporary={[]} />
-            : <div className="card empty">
-                <div style={{fontSize:40,marginBottom:10}}>🔍</div>
-                <div style={{font:"700 16px/1.4 ui-sans-serif",color:"var(--ink)",marginBottom:6}}>No results found</div>
-                <div style={{marginBottom:16}}>Nothing matches "{q}". Try a Student ID, a name, a title keyword, or a room number.</div>
-                <button className="btn ghost" onClick={()=>setQ("")}>Clear search</button>
-              </div>}
-          <Footer/>
-        </>
-      )}
-    </div>
-  );
-}
-
 /* =======================================================================
-   PUBLIC  VIEW  (?view=slug — no login, reads one published semester
-   straight from Supabase; used for the link shared with students)
+   PUBLIC  PORTAL  (Student portal tab — no login, reads from Supabase.
+   Shows a semester selection bar first, then that semester's boards.
+   This is the tab students use via the one shared site link.)
    ======================================================================= */
-function PublicView({slug}){
-  const [status,setStatus]=useState("loading"); // loading | ok | notfound | error
-  const [row,setRow]=useState(null);
+function PublicPortal(){
+  const [status,setStatus]=useState("loading"); // loading | ok | empty | error
+  const [list,setList]=useState([]);            // [{slug,semester}]
+  const [sem,setSem]=useState(null);             // currently selected {slug,semester}
+  const [boardData,setBoardData]=useState(null); // {boards,temporary} for selected sem
+  const [boardStatus,setBoardStatus]=useState("idle"); // idle | loading | ok | error
   const [q,setQ]=useState("");
 
+  // Load the list of published semesters (light query — no board data yet).
   useEffect(()=>{
     let cancelled=false;
-    setStatus("loading");
-    sb.from("published_semesters").select("semester,data").eq("slug",slug).single()
+    sb.from("published_semesters").select("slug,semester").order("updated_at",{ascending:false})
       .then(({data,error})=>{
         if(cancelled) return;
-        if(error||!data){ setStatus(data?"ok":"notfound"); if(error) setStatus("error"); return; }
-        setRow(data); setStatus("ok");
+        if(error){ setStatus("error"); return; }
+        setList(data||[]);
+        setStatus((data&&data.length)?"ok":"empty");
       })
       .catch(()=>{ if(!cancelled) setStatus("error"); });
     return ()=>{ cancelled=true; };
-  },[slug]);
+  },[]);
+
+  // Load the full board data only once a semester is picked.
+  useEffect(()=>{
+    if(!sem) return;
+    let cancelled=false;
+    setBoardStatus("loading");
+    sb.from("published_semesters").select("data").eq("slug",sem.slug).single()
+      .then(({data,error})=>{
+        if(cancelled) return;
+        if(error||!data){ setBoardStatus("error"); return; }
+        setBoardData(data.data); setBoardStatus("ok");
+      })
+      .catch(()=>{ if(!cancelled) setBoardStatus("error"); });
+    return ()=>{ cancelled=true; };
+  },[sem]);
 
   const filtered=useMemo(()=>{
-    if(!row) return null;
+    if(!boardData) return null;
     const needle=q.trim().toLowerCase();
     const match=(b)=>{
       if(!needle) return true;
@@ -1622,8 +1575,8 @@ function PublicView({slug}){
         .join(" ").toLowerCase();
       return hay.includes(needle);
     };
-    return {boards:row.data.boards.filter(match)};
-  },[row,q]);
+    return {boards:boardData.boards.filter(match)};
+  },[boardData,q]);
 
   const Footer=()=>(
     <div className="footer">
@@ -1637,24 +1590,42 @@ function PublicView({slug}){
       <div className="eyebrow">Student &amp; faculty portal</div>
       <h1 style={{fontSize:30,margin:"6px 0 14px"}}>Defense schedule</h1>
 
-      {status==="loading" && <div className="card empty">Loading schedule…</div>}
-      {status==="notfound" && <div className="card empty">No schedule found for this link. Please check the URL with your department.</div>}
-      {status==="error" && <div className="card empty">Couldn't load the schedule right now. Please refresh or try again shortly.</div>}
+      {status==="loading" && <div className="card empty">Loading semesters…</div>}
+      {status==="error" && <div className="card empty">Couldn't load schedules right now. Please refresh or try again shortly.</div>}
+      {status==="empty" && <div className="card empty">No schedules published yet. Please check back later.</div>}
 
-      {status==="ok" && row && (
+      {status==="ok" && !sem && (
+        // --- semester selection bar ---
+        <div className="card pad">
+          <h2 style={{fontSize:18,marginBottom:6}}>Select a semester</h2>
+          <p className="note" style={{marginBottom:16}}>Choose which semester's defense schedule you'd like to view.</p>
+          <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+            {list.map(s=>(
+              <button key={s.slug} className="btn" style={{fontSize:15,padding:"12px 20px"}} onClick={()=>{setSem(s);setQ("");}}>{s.semester}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {sem && (
         <>
           <div className="search">
-            <span className="pill" style={{alignSelf:"center",padding:"6px 12px",fontSize:14}}>{row.semester}</span>
-            <input placeholder="Search by Student ID, name, title, or room…" value={q} onChange={e=>setQ(e.target.value)} />
+            <button className="btn ghost" onClick={()=>{setSem(null);setBoardData(null);setQ("");}} title="Choose a different semester">← Semesters</button>
+            <span className="pill" style={{alignSelf:"center",padding:"6px 12px",fontSize:14}}>{sem.semester}</span>
+            {boardStatus==="ok" && <input placeholder="Search by Student ID, name, title, or room…" value={q} onChange={e=>setQ(e.target.value)} />}
           </div>
-          {filtered.boards.length
-            ? <BoardList boards={filtered.boards} temporary={[]} />
-            : <div className="card empty">
-                <div style={{fontSize:40,marginBottom:10}}>🔍</div>
-                <div style={{font:"700 16px/1.4 ui-sans-serif",color:"var(--ink)",marginBottom:6}}>No results found</div>
-                <div style={{marginBottom:16}}>Nothing matches "{q}". Try a Student ID, a name, a title keyword, or a room number.</div>
-                <button className="btn ghost" onClick={()=>setQ("")}>Clear search</button>
-              </div>}
+          {boardStatus==="loading" && <div className="card empty">Loading schedule…</div>}
+          {boardStatus==="error" && <div className="card empty">Couldn't load this schedule. Please try again.</div>}
+          {boardStatus==="ok" && (
+            filtered.boards.length
+              ? <BoardList boards={filtered.boards} temporary={[]} />
+              : <div className="card empty">
+                  <div style={{fontSize:40,marginBottom:10}}>🔍</div>
+                  <div style={{font:"700 16px/1.4 ui-sans-serif",color:"var(--ink)",marginBottom:6}}>No results found</div>
+                  <div style={{marginBottom:16}}>Nothing matches "{q}". Try a Student ID, a name, a title keyword, or a room number.</div>
+                  <button className="btn ghost" onClick={()=>setQ("")}>Clear search</button>
+                </div>
+          )}
         </>
       )}
       <Footer/>
@@ -1663,16 +1634,80 @@ function PublicView({slug}){
 }
 
 /* =======================================================================
+   ADMIN  LOGIN  GATE
+   Real authentication via Supabase Auth — the username/password are never
+   stored in this file. They live only in Supabase's own auth system.
+   The admin account itself must be created once in the Supabase dashboard
+   (see setup notes). "username" here maps to a hidden fixed email domain
+   so a normal short username can be used instead of a full email address.
+   ======================================================================= */
+const ADMIN_EMAIL_DOMAIN = "gub.local"; // not secret — just a namespacing suffix
+
+function AdminGate({children}){
+  const [session,setSession]=useState(undefined); // undefined=checking, null=signed out
+  const [username,setUsername]=useState("");
+  const [password,setPassword]=useState("");
+  const [err,setErr]=useState("");
+  const [busy,setBusy]=useState(false);
+
+  useEffect(()=>{
+    sb.auth.getSession().then(({data})=>setSession(data.session||null));
+    const {data:sub}=sb.auth.onAuthStateChange((_event,sess)=>setSession(sess));
+    return ()=>sub.subscription.unsubscribe();
+  },[]);
+
+  const signIn=async (e)=>{
+    e.preventDefault();
+    if(!username.trim()||!password) return;
+    setBusy(true); setErr("");
+    const email=username.trim().toLowerCase()+"@"+ADMIN_EMAIL_DOMAIN;
+    const {error}=await sb.auth.signInWithPassword({email,password});
+    setBusy(false);
+    if(error) setErr("Incorrect username or password.");
+  };
+
+  if(session===undefined){
+    return <div className="wrap" style={{padding:"60px 22px"}}><div className="card empty">Checking session…</div></div>;
+  }
+
+  if(!session){
+    return (
+      <div className="wrap" style={{padding:"60px 22px",maxWidth:420}}>
+        <div className="eyebrow">Admin workspace</div>
+        <h1 style={{fontSize:26,margin:"6px 0 20px"}}>Sign in</h1>
+        <form className="card pad" onSubmit={signIn}>
+          <div className="field">
+            <label>Username</label>
+            <input autoFocus value={username} onChange={e=>setUsername(e.target.value)} autoComplete="username" />
+          </div>
+          <div className="field" style={{marginTop:12}}>
+            <label>Password</label>
+            <input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" />
+          </div>
+          {err && <p className="note" style={{color:"var(--clay)",marginTop:10}}>{err}</p>}
+          <div className="toolbar" style={{marginTop:16}}>
+            <button className="btn" style={{marginLeft:"auto"}} disabled={busy} type="submit">{busy?"Signing in…":"Sign in"}</button>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="wrap" style={{padding:"14px 22px 0",display:"flex",justifyContent:"flex-end"}}>
+        <button className="btn ghost ui" style={{fontSize:12,padding:"6px 10px"}} onClick={()=>sb.auth.signOut()}>Sign out</button>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/* =======================================================================
    ROOT
    ======================================================================= */
 function App(){
-  // Public link: https://yourapp/?view=spring-2026 — read-only, no admin UI.
-  const viewSlug = new URLSearchParams(location.search).get("view");
-  if(viewSlug){
-    return <PublicView slug={viewSlug} />;
-  }
-
-  const [tab,setTab]=useState("admin");
+  const [tab,setTab]=useState("portal"); // default to the student view for the shared link
   const DEFAULT_STORE={
     semester:"Spring 2026",
     groups:[],
@@ -1684,9 +1719,12 @@ function App(){
       slots:[{id:"S1",label:"9:00am – 12:00pm",date:""},{id:"S2",label:"2:00pm – 5:00pm",date:""}] },
     result:null,
     published:{},
+    adminStep:0,
   };
-  // Persist the whole session to localStorage so a refresh keeps imported
-  // groups, roster edits, the working draft, AND published semesters.
+  // Persist the admin's working session to localStorage so a refresh keeps
+  // imported groups, roster edits, and the working draft. This is local to
+  // the admin's own browser — it has no effect on what students see, which
+  // comes straight from Supabase via PublicPortal.
   const STORAGE_KEY="gub-board-generator/v1";
   const [store,setStore]=useState(()=>{
     try{
@@ -1718,15 +1756,19 @@ function App(){
             <span>Board Generator<small>GUB · CSE Department</small></span>
           </div>
           <div className="seg ui">
-            <button className={tab==="admin"?"on":""} onClick={()=>setTab("admin")}>Admin</button>
             <button className={tab==="portal"?"on":""} onClick={()=>setTab("portal")}>Student portal</button>
+            <button className={tab==="admin"?"on":""} onClick={()=>setTab("admin")}>Admin</button>
           </div>
-          <button className="btn ghost ui" style={{marginLeft:10,fontSize:12,padding:"6px 10px"}} onClick={resetAll} title="Clear all saved data">
-            <span className="reset-full">Reset data</span><span className="reset-mini">↺</span>
-          </button>
+          {tab==="admin" && (
+            <button className="btn ghost ui" style={{marginLeft:10,fontSize:12,padding:"6px 10px"}} onClick={resetAll} title="Clear all saved data">
+              <span className="reset-full">Reset data</span><span className="reset-mini">↺</span>
+            </button>
+          )}
         </div>
       </div>
-      {tab==="admin" ? <Admin store={store} setStore={setStore} /> : <Portal store={store} />}
+      {tab==="admin"
+        ? <AdminGate><Admin store={store} setStore={setStore} /></AdminGate>
+        : <PublicPortal />}
     </div>
   );
 }
