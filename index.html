@@ -301,6 +301,8 @@ const CELLS = { AIML:"Artificial Intelligence & Machine Learning", NLP:"Natural 
 const CELL_SHORT = { AIML:"AI/ML", NLP:"NLP", CV:"CV", BIO:"Bio", GREEN:"Green", CYBER:"Cyber", OR:"OR" };
 // "B01" -> "Board 1". Falls back to the raw id if it doesn't match.
 const boardLabel = (id)=>{ const m=/^B0*(\d+)$/.exec(String(id||"")); return m?`Board ${m[1]}`:String(id||""); };
+// Display name for a board: an admin-set custom name if present, else the default "Board N".
+const boardName = (b)=> (b && b.name && b.name.trim()) ? b.name.trim() : boardLabel(b?.boardId);
 // Pretty date: "2026-06-13" -> "Sat, 13 Jun 2026". Empty -> "TBA".
 const fmtDate = (d)=>{ if(!d)return "TBA"; const dt=new Date(d+"T00:00:00"); if(isNaN(dt))return d;
   return dt.toLocaleDateString("en-GB",{weekday:"short",day:"2-digit",month:"short",year:"numeric"}); };
@@ -1316,14 +1318,17 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
       {boards.map((b,bi)=>(
         <div className="card board" key={b.boardId}>
           <div className="bhead">
-            <span className="id">{boardLabel(b.boardId)}</span>
+            <input className="ui" value={b.name ?? boardLabel(b.boardId)} title="Click to rename this board"
+              onChange={e=>setBoardField(bi,"name",e.target.value)}
+              style={{font:"800 13px/1 ui-sans-serif",letterSpacing:".06em",color:"#fff",background:"var(--moss)",
+                padding:"8px 11px",borderRadius:9,border:"1px solid var(--moss-700)",width:Math.max(96,(b.name??boardLabel(b.boardId)).length*8+30)}}/>
             <div style={{flex:1}}>
               <div className="bmeta" style={{alignItems:"center"}}>
                 <span><b>{cellComp(b)}</b></span>
                 <span className="pill" style={{padding:"3px 8px"}}>pairing {b.pairingRule}</span>
                 {b.sizeNote && <span className="pill" style={{padding:"3px 8px",background:"#fdf6f1",borderColor:"#e6c3ad",color:"var(--clay)"}}>⚠ {b.sizeNote}</span>}
                 <button className="delboard" title="Delete this board (its groups move to Temporary)"
-                  onClick={()=>{ if(confirm(`Delete ${boardLabel(b.boardId)}? Its ${b.groups.length} group(s) will move to the Temporary board for reassignment.`)) deleteBoard(bi); }}>
+                  onClick={()=>{ if(confirm(`Delete ${boardName(b)}? Its ${b.groups.length} group(s) will move to the Temporary board for reassignment.`)) deleteBoard(bi); }}>
                   Delete board
                 </button>
               </div>
@@ -1343,30 +1348,49 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
 
           <div className="evs">
             <span className="note" style={{alignSelf:"center",marginRight:4}}>Evaluators:</span>
-            {b.evaluators.map((e,ei)=>{
-              const fam=FAMILIES.find(f=>f.id===b.family);
-              const eligible=faculty.filter(f=>fam&&fam.cells.includes(f.cell)&&tierOf(f));
-              const eligibleIds=new Set(eligible.map(f=>f.id));
-              const others=faculty.filter(f=>!eligibleIds.has(f.id));
-              const label=o=>`${o.name.replace(/^(Mr\.|Mrs\.|Ms\.|Prof\. Dr\.|Dr\.) /,"")} (${CELL_SHORT[o.cell]||o.cell})`;
-              return (
-                <span className="ev" key={ei}>
-                  <TierBadge t={e.tier}/>
-                  <select className="evsel" value={e.id} onChange={ev=>setEvaluator(bi,ei,ev.target.value)}>
-                    <option value="">— choose faculty —</option>
-                    <optgroup label="Eligible for this family">
-                      {eligible.map(o=><option key={o.id} value={o.id}>{label(o)}</option>)}
-                    </optgroup>
-                    {others.length>0 && (
-                      <optgroup label="Other faculty (manual add)">
-                        {others.map(o=><option key={o.id} value={o.id}>{label(o)}</option>)}
+            {(()=>{
+              // Faculty already sitting on a DIFFERENT board at this board's exact
+              // date + time slot can't also sit here — cross-board double-booking
+              // check. Only applies once both a date and a time are set.
+              const timeKey=b.slot?.label||b.slot?.id||"";
+              const crossBusy=new Set();
+              if(b.date && timeKey){
+                boards.forEach((ob,oi)=>{
+                  if(oi===bi) return;
+                  const obTime=ob.slot?.label||ob.slot?.id||"";
+                  if(ob.date===b.date && obTime===timeKey){
+                    ob.evaluators.forEach(ev=>{ if(ev.id) crossBusy.add(ev.id); });
+                  }
+                });
+              }
+              return b.evaluators.map((e,ei)=>{
+                const fam=FAMILIES.find(f=>f.id===b.family);
+                // Also exclude anyone already picked in another evaluator slot on this same board.
+                const sameBoardBusy=new Set(b.evaluators.filter((_,idx)=>idx!==ei).map(x=>x.id).filter(Boolean));
+                const isFree=f=>f.id===e.id || (!crossBusy.has(f.id) && !sameBoardBusy.has(f.id));
+                const eligible=faculty.filter(f=>fam&&fam.cells.includes(f.cell)&&tierOf(f)&&isFree(f));
+                const eligibleIds=new Set(eligible.map(f=>f.id));
+                const others=faculty.filter(f=>!eligibleIds.has(f.id)&&isFree(f));
+                const label=o=>`${o.name.replace(/^(Mr\.|Mrs\.|Ms\.|Prof\. Dr\.|Dr\.) /,"")} (${CELL_SHORT[o.cell]||o.cell})`;
+                return (
+                  <span className="ev" key={ei}>
+                    <TierBadge t={e.tier}/>
+                    <select className="evsel" value={e.id} onChange={ev=>setEvaluator(bi,ei,ev.target.value)}>
+                      <option value="">— choose faculty —</option>
+                      <optgroup label="Eligible for this family">
+                        {eligible.map(o=><option key={o.id} value={o.id}>{label(o)}</option>)}
                       </optgroup>
-                    )}
-                  </select>
-                  <button className="xbtn" title="Remove this evaluator" onClick={()=>removeEvaluator(bi,ei)}>×</button>
-                </span>
-              );
-            })}
+                      {others.length>0 && (
+                        <optgroup label="Other faculty (manual add)">
+                          {others.map(o=><option key={o.id} value={o.id}>{label(o)}</option>)}
+                        </optgroup>
+                      )}
+                    </select>
+                    <button className="xbtn" title="Remove this evaluator" onClick={()=>removeEvaluator(bi,ei)}>×</button>
+                  </span>
+                );
+              });
+            })()}
             <button className="btn ghost" style={{padding:"6px 12px",fontSize:12}} onClick={()=>addEvaluator(bi)}>+ Add evaluator</button>
           </div>
 
@@ -1389,13 +1413,13 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
                     <td>
                       <select className="mini" value="" onChange={e=>{ if(e.target.value!=="")moveGroup(bi,gi,e.target.value); }}>
                         <option value="">Move to…</option>
-                        {boards.map((ob,oi)=> oi!==bi && <option key={ob.boardId} value={oi}>{`${boardLabel(ob.boardId)} — ${ob.groups.length} grp · ${ob.cells.map(c=>CELL_SHORT[c]).join("+")}`}</option>)}
+                        {boards.map((ob,oi)=> oi!==bi && <option key={ob.boardId} value={oi}>{`${boardName(ob)} — ${ob.groups.length} grp · ${ob.cells.map(c=>CELL_SHORT[c]).join("+")}`}</option>)}
                         <option value="TEMP">Temporary board</option>
                       </select>
                     </td>
                     <td>
                       <button className="delgrp" title="Remove this group from the schedule"
-                        onClick={()=>{ if(confirm(`Remove "${g.title||g.publicId||g.groupId}" from ${boardLabel(b.boardId)}? It will be deleted from the schedule (not sent to Temporary).`)) removeGroup(bi,gi); }}>Remove</button>
+                        onClick={()=>{ if(confirm(`Remove "${g.title||g.publicId||g.groupId}" from ${boardName(b)}? It will be deleted from the schedule (not sent to Temporary).`)) removeGroup(bi,gi); }}>Remove</button>
                     </td>
                   </tr>
                 ))}
@@ -1427,7 +1451,7 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
                     <td>
                       <select className="mini" value="" onChange={e=>{ if(e.target.value!=="")restoreTemp(ti,e.target.value); }}>
                         <option value="">Assign to…</option>
-                        {boards.map((ob,oi)=><option key={ob.boardId} value={oi}>{`${boardLabel(ob.boardId)} — ${ob.groups.length} grp · ${ob.cells.map(c=>CELL_SHORT[c]).join("+")}`}</option>)}
+                        {boards.map((ob,oi)=><option key={ob.boardId} value={oi}>{`${boardName(ob)} — ${ob.groups.length} grp · ${ob.cells.map(c=>CELL_SHORT[c]).join("+")}`}</option>)}
                       </select>
                     </td>
                     <td>
@@ -1483,7 +1507,7 @@ function PortalBoardCard({b}){
     <div className="card pcard board">
       <div className="phead">
         <div>
-          <div className="ptitle">{boardLabel(b.boardId)}</div>
+          <div className="ptitle">{boardName(b)}</div>
         </div>
         <div className="pwhen">
           <span className="pwdate">{fmtDate(b.date)}</span>
@@ -1543,7 +1567,7 @@ function BoardCard({b,admin,onRoom}){
     <div className="card board">
       <div className="bhead">
         <div style={{flex:1,display:"flex",alignItems:"center",gap:14}}>
-          {admin && <span className="id">{boardLabel(b.boardId)}</span>}
+          {admin && <span className="id">{boardName(b)}</span>}
           {admin && <span className="bmeta" style={{alignItems:"center"}}>
             <span><b>{cellComp(b)}</b></span>
             <span className="pill" style={{padding:"3px 8px"}}>pairing {b.pairingRule}</span>
@@ -1553,7 +1577,7 @@ function BoardCard({b,admin,onRoom}){
               onChange={e=>onRoom&&onRoom(b.boardId,e.target.value)}/></span>
           </span>}
         </div>
-        {!admin && <span className="bigboard">{boardLabel(b.boardId)}</span>}
+        {!admin && <span className="bigboard">{boardName(b)}</span>}
         <div className="when">
           <span className="wdate">{fmtDate(b.date)}</span>
           <span className="wtime">{b.slot?.label||b.slot?.id||"Time TBA"}</span>
@@ -1678,7 +1702,7 @@ function PublicPortal(){
     const needle=q.trim().toLowerCase();
     const match=(b)=>{
       if(!needle) return true;
-      const hay=[boardLabel(b.boardId),b.room,...b.evaluators.map(e=>e.name),
+      const hay=[boardLabel(b.boardId),boardName(b),b.room,...b.evaluators.map(e=>e.name),
         ...b.groups.flatMap(g=>[g.title,...(g.students||[])])]
         .join(" ").toLowerCase();
       return hay.includes(needle);
