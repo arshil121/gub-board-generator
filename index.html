@@ -554,8 +554,36 @@ function packByComposition(groups,size){
   return boards;
 }
 
+// Same board-count/size logic as packByComposition (never below MIN_BOARD
+// groups on a board), but applied to ONE type at a time so a board never
+// receives both. Used when config.separateByType is on — the "only Thesis
+// or only Project per board" rule.
+function packSingleType(list,size){
+  const total=list.length;
+  if(total===0)return [];
+  const MIN_BOARD=4;
+  const maxBoards=Math.max(1,Math.floor(total/MIN_BOARD));
+  const boardCount=Math.min(Math.max(1,Math.round(total/size)),maxBoards);
+  const caps=Array.from({length:boardCount},()=>Math.floor(total/boardCount));
+  for(let i=0;i<total%boardCount;i++)caps[i]+=1;
+  const pool=list.slice();
+  const boards=caps.map(cap=>pool.splice(0,cap));
+  // Safety net (should be a no-op — caps always sum to total).
+  for(const g of pool){
+    boards.sort((a,b)=>a.length-b.length);
+    const target=boards.find(b=>b.length<size+1)||boards[0];
+    target.push(g);
+  }
+  return boards;
+}
+function packSeparateByType(groups,size){
+  const thesis=groups.filter(g=>g.type==="Thesis");
+  const project=groups.filter(g=>g.type!=="Thesis");
+  return [...packSingleType(thesis,size),...packSingleType(project,size)];
+}
+
 function generateBoards(groups,config){
-  const {targetGroupCount=4,evaluatorCount=2,slots=[{id:"S1",label:"Slot 1"}],facultyTierOverrides={},faculty=FACULTY,seed=Date.now()}=config;
+  const {targetGroupCount=4,evaluatorCount=2,slots=[{id:"S1",label:"Slot 1"}],facultyTierOverrides={},faculty=FACULTY,seed=Date.now(),separateByType=false}=config;
   const rng=mulberry32(seed>>>0);
   const shuffle=(arr)=>{const a=arr.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;};
   const facultyById=Object.fromEntries(faculty.map(f=>[f.id,f]));
@@ -573,7 +601,7 @@ function generateBoards(groups,config){
   for(const [familyId,famGroups] of Object.entries(byFamily)){
     const cellBuckets={}; for(const g of famGroups)(cellBuckets[g._cell]||=[]).push(g);
     const shuffledFam=shuffle(Object.keys(cellBuckets)).flatMap(c=>shuffle(cellBuckets[c]));
-    const chunks=packByComposition(shuffledFam,targetGroupCount);
+    const chunks=separateByType?packSeparateByType(shuffledFam,targetGroupCount):packByComposition(shuffledFam,targetGroupCount);
     const famFaculty=faculty.filter(f=>{const fa=familyOfCell(f.cell);return fa&&fa.id===familyId&&tierOf(f.id);});
     const orderedChunks=chunks.map(gs=>{
       const conf=new Set(); for(const g of gs)for(const id of g._conflicts)conf.add(id);
@@ -601,7 +629,8 @@ function generateBoards(groups,config){
       boards.push({
         boardId:`B${String(seq).padStart(2,"0")}`, family:familyId,
         cells:[...new Set(groupsForBoard.map(g=>g._cell))], slot, date:null, room:null,
-        composition:`${tCount}T+${pCount}P`, compositionOk:isPreferredComposition(tCount,pCount),
+        composition:`${tCount}T+${pCount}P`,
+        compositionOk: separateByType ? (tCount===0||pCount===0) : isPreferredComposition(tCount,pCount),
         sizeNote:(groupsForBoard.length<4 ? `only ${groupsForBoard.length} group(s) — family pool too small`
           : groupsForBoard.length>targetGroupCount+1 ? `oversized (${groupsForBoard.length} groups)` : null),
         evaluators:pick.evaluators.map(e=>({id:e.id,name:e.name,designation:e.designation,cell:e.cell,code:e.code,tier:tierOf(e.id)})),
@@ -610,7 +639,7 @@ function generateBoards(groups,config){
       });
     }
   }
-  return {boards,temporary};
+  return {boards,temporary,separateByType};
 }
 
 /* =======================================================================
@@ -967,12 +996,31 @@ function StepConfig({store,setStore,next}){
         to avoid leaving a tiny board of 1–2 groups. Evaluators are picked randomly within the allowed tier each
         generation, so the same faculty aren't always chosen.
       </p>
-      <div className="banner ui" style={{marginTop:12}}>
-        <b>Thesis/Project mix per board.</b> For 4-group boards the engine prefers, in order:
-        2T+2P → 3T+1P → 4T+0P → 1T+3P. For 5-group boards: 3T+2P → 2T+3P → 4T+1P → 5T+0P → 1T+4P.
-        It satisfies the highest-priority pattern the pool allows; leftover groups that fit no pattern are
-        still placed (best-effort) so no one is dropped.
+
+      <div className="field" style={{marginTop:18,maxWidth:420}}>
+        <label>Thesis / Project rule</label>
+        <select value={c.separateByType?"separate":"mixed"}
+          onChange={e=>set("separateByType",e.target.value==="separate")}>
+          <option value="mixed">Combine — a board may mix Thesis and Project groups</option>
+          <option value="separate">Separate — each board is only Thesis or only Project</option>
+        </select>
       </div>
+
+      {!c.separateByType ? (
+        <div className="banner ui" style={{marginTop:12}}>
+          <b>Thesis/Project mix per board.</b> For 4-group boards the engine prefers, in order:
+          2T+2P → 3T+1P → 4T+0P → 1T+3P. For 5-group boards: 3T+2P → 2T+3P → 4T+1P → 5T+0P → 1T+4P.
+          It satisfies the highest-priority pattern the pool allows; leftover groups that fit no pattern are
+          still placed (best-effort) so no one is dropped.
+        </div>
+      ) : (
+        <div className="banner ui" style={{marginTop:12}}>
+          <b>Thesis/Project separated.</b> Each family's Thesis groups and Project groups are packed into their
+          own boards independently, so no board ever contains both. If one type doesn't have enough leftover
+          groups to fill a whole board on its own, it still gets a smaller board of just that type rather than
+          being merged with the other — best-effort, so no one is dropped.
+        </div>
+      )}
       <div className="toolbar"><button className="btn" style={{marginLeft:"auto"}} onClick={next}>Continue →</button></div>
     </div>
   );
@@ -1081,7 +1129,8 @@ function StepGenerate({store,setStore}){
 
   // Mutators for editing the draft result in place.
   const update=(mutator)=>setStore(s=>{
-    const result={boards:s.result.boards.map(b=>({...b,groups:b.groups.map(g=>({...g})),evaluators:b.evaluators.map(e=>({...e}))})),
+    const result={...s.result,
+      boards:s.result.boards.map(b=>({...b,groups:b.groups.map(g=>({...g})),evaluators:b.evaluators.map(e=>({...e}))})),
       temporary:s.result.temporary.map(t=>({...t}))};
     mutator(result);
     return {...s,result,dirty:true};
@@ -1146,13 +1195,15 @@ function StepGenerate({store,setStore}){
 
           {(()=>{
             const counts={}; r.boards.forEach(b=>counts[b.composition]=(counts[b.composition]||0)+1);
+            const offRule=r.separateByType?r.boards.filter(b=>!b.compositionOk).length:0;
             return (
               <div className="ui" style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:6,alignItems:"center"}}>
-                <span className="note">Thesis/Project mix:</span>
+                <span className="note">{r.separateByType?"Thesis/Project split (kept separate):":"Thesis/Project mix:"}</span>
                 {Object.entries(counts).map(([k,n])=>{
                   const ok=r.boards.find(b=>b.composition===k)?.compositionOk;
                   return <span key={k} className="pill" style={ok?{}:{color:"var(--clay)",borderColor:"#e6c3ad"}}>{k}: {n}</span>;
                 })}
+                {offRule>0 && <span className="note" style={{color:"var(--clay)"}}>· {offRule} board(s) mix both types (from a manual move).</span>}
               </div>
             );
           })()}
@@ -1171,11 +1222,11 @@ function StepGenerate({store,setStore}){
 }
 
 // Recompute composition label after edits/moves.
-function recomposition(board){
+function recomposition(board,separateByType){
   const t=board.groups.filter(g=>g.type==="Thesis").length;
   const p=board.groups.filter(g=>g.type!=="Thesis").length;
   board.composition=`${t}T+${p}P`;
-  board.compositionOk=isPreferredComposition(t,p);
+  board.compositionOk=separateByType?(t===0||p===0):isPreferredComposition(t,p);
   board.cells=[...new Set(board.groups.map(g=>g.cell))];
 }
 
@@ -1189,24 +1240,24 @@ function EditableBoards({result,faculty,tierOverrides,update}){
     if(toBi==="TEMP"){
       const [g]=r.boards[fromBi].groups.splice(gi,1);
       r.temporary.push({group:{groupId:g.groupId,title:g.title,type:g.type,students:g.students,supervisor:g.supervisor,coSupervisor:g.coSupervisor,cell:g.cell,publicId:g.publicId},reason:"Moved manually by admin."});
-      recomposition(r.boards[fromBi]);
+      recomposition(r.boards[fromBi],r.separateByType);
     } else {
       const ti=+toBi;
       const [g]=r.boards[fromBi].groups.splice(gi,1);
       r.boards[ti].groups.push(g);
-      recomposition(r.boards[fromBi]); recomposition(r.boards[ti]);
+      recomposition(r.boards[fromBi],r.separateByType); recomposition(r.boards[ti],r.separateByType);
     }
   });
 
   const restoreTemp=(ti,toBi)=>update(r=>{
     const [t]=r.temporary.splice(ti,1);
     const g={...t.group};
-    r.boards[+toBi].groups.push(g); recomposition(r.boards[+toBi]);
+    r.boards[+toBi].groups.push(g); recomposition(r.boards[+toBi],r.separateByType);
   });
 
   // Permanently remove a group from a board (deleted from the schedule, not
   // routed to Temporary).
-  const removeGroup=(bi,gi)=>update(r=>{ r.boards[bi].groups.splice(gi,1); recomposition(r.boards[bi]); });
+  const removeGroup=(bi,gi)=>update(r=>{ r.boards[bi].groups.splice(gi,1); recomposition(r.boards[bi],r.separateByType); });
   // Remove a group sitting on the Temporary board.
   const removeTemp=(ti)=>update(r=>{ r.temporary.splice(ti,1); });
 
@@ -1215,7 +1266,7 @@ function EditableBoards({result,faculty,tierOverrides,update}){
     r.boards[bi].evaluators[ei]={id:f.id,name:f.name,designation:f.designation,cell:f.cell,code:f.code,tier:(Object.prototype.hasOwnProperty.call(tierOverrides,f.id)?tierOverrides[f.id]:f.tier)};
   });
 
-  const setGroupField=(bi,gi,field,val)=>update(r=>{ r.boards[bi].groups[gi][field]=val; if(field==="type")recomposition(r.boards[bi]); });
+  const setGroupField=(bi,gi,field,val)=>update(r=>{ r.boards[bi].groups[gi][field]=val; if(field==="type")recomposition(r.boards[bi],r.separateByType); });
 
   const deleteBoard=(bi)=>update(r=>{
     const board=r.boards[bi];
@@ -1653,7 +1704,7 @@ function makeDefaultState(name){
     onlyConfirmed:false,
     faculty:FACULTY.map(f=>({...f})),
     tierOverrides:{},
-    config:{ targetGroupCount:4, evaluatorCount:2,
+    config:{ targetGroupCount:4, evaluatorCount:2, separateByType:false,
       slots:[{id:"S1",label:"9:00am – 12:00pm",date:""},{id:"S2",label:"2:00pm – 5:00pm",date:""}] },
     result:null,
     dirty:false,
