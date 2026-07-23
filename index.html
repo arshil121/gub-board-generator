@@ -305,7 +305,8 @@ const boardLabel = (id)=>{ const m=/^B0*(\d+)$/.exec(String(id||"")); return m?`
 const fmtDate = (d)=>{ if(!d)return "TBA"; const dt=new Date(d+"T00:00:00"); if(isNaN(dt))return d;
   return dt.toLocaleDateString("en-GB",{weekday:"short",day:"2-digit",month:"short",year:"numeric"}); };
 // "CV" + "4T+0P" style combined cell+composition string.
-const cellComp = (b)=> b.cells.map(c=>CELL_SHORT[c]).join("+") + (b.composition?` · ${b.composition}`:"");
+const cellComp = (b)=> (b.cells&&b.cells.length ? b.cells.map(c=>CELL_SHORT[c]).join("+")
+  : (FAMILIES.find(f=>f.id===b.family)?.name || "No groups yet")) + (b.composition?` · ${b.composition}`:"");
 const FAMILIES = [
   { id:"F1", name:"AI · NLP · CV · Bioinformatics", cells:["AIML","NLP","CV","BIO"] },
   { id:"F2", name:"Green Computing · Cybersecurity", cells:["GREEN","CYBER"] },
@@ -661,7 +662,7 @@ const SAMPLE_GROUPS = [
 /* =======================================================================
    UI helpers
    ======================================================================= */
-const TierBadge = ({t})=> <span className={"tier t"+t}>{t}</span>;
+const TierBadge = ({t})=> <span className={"tier"+(t?" t"+t:"")}>{t||"–"}</span>;
 const TypePill = ({t})=> <span className={"pill "+(t==="Thesis"?"thesis":"project")}>{t}</span>;
 
 function Stat({n,label}){ return <div className="stat"><b>{n}</b><span className="muted ui">{label}</span></div>; }
@@ -1214,7 +1215,7 @@ function StepGenerate({store,setStore}){
             here for your review but are <b>hidden on the student portal</b>.
           </div>
 
-          <EditableBoards result={r} faculty={store.faculty} tierOverrides={store.tierOverrides} update={update} />
+          <EditableBoards result={r} faculty={store.faculty} tierOverrides={store.tierOverrides} update={update} evaluatorCount={store.config.evaluatorCount} />
         </div>
       )}
     </div>
@@ -1230,11 +1231,32 @@ function recomposition(board,separateByType){
   board.cells=[...new Set(board.groups.map(g=>g.cell))];
 }
 
-function EditableBoards({result,faculty,tierOverrides,update}){
+function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
   const boards=result.boards;
   const tierOf=(f)=> Object.prototype.hasOwnProperty.call(tierOverrides,f.id)?tierOverrides[f.id]:f.tier;
+  const [newFamily,setNewFamily]=useState(FAMILIES[0].id);
 
   const setBoardField=(bi,field,val)=>update(r=>{ r.boards[bi][field]=val; });
+
+  // Manually add a brand-new, empty board (e.g. for an ad-hoc panel that
+  // wasn't produced by the generator). Its ID continues the existing B01,
+  // B02… sequence. Groups can then be moved into it (via each group's
+  // "Move to…" control or a Temporary group's "Assign to…" control) and
+  // evaluators picked from the chosen family's eligible faculty.
+  const addBoard=(familyId)=>update(r=>{
+    const nums=r.boards.map(b=>{ const m=/^B0*(\d+)$/.exec(String(b.boardId||"")); return m?+m[1]:0; });
+    const nextNum=(nums.length?Math.max(...nums):0)+1;
+    r.boards.push({
+      boardId:`B${String(nextNum).padStart(2,"0")}`,
+      family:familyId,
+      cells:[], slot:{id:"custom",label:""}, date:null, room:null,
+      composition:"0T+0P", compositionOk:true,
+      sizeNote:"New board — add groups and evaluators.",
+      evaluators:Array.from({length:Math.max(2,evaluatorCount||2)},()=>({id:"",name:"",designation:"",cell:"",code:"",tier:null})),
+      pairingRule:"manual",
+      groups:[],
+    });
+  });
 
   const moveGroup=(fromBi,gi,toBi)=>update(r=>{
     if(toBi==="TEMP"){
@@ -1262,9 +1284,15 @@ function EditableBoards({result,faculty,tierOverrides,update}){
   const removeTemp=(ti)=>update(r=>{ r.temporary.splice(ti,1); });
 
   const setEvaluator=(bi,ei,fid)=>update(r=>{
+    if(!fid){ r.boards[bi].evaluators[ei]={id:"",name:"",designation:"",cell:"",code:"",tier:null}; return; }
     const f=faculty.find(x=>x.id===fid); if(!f)return;
     r.boards[bi].evaluators[ei]={id:f.id,name:f.name,designation:f.designation,cell:f.cell,code:f.code,tier:(Object.prototype.hasOwnProperty.call(tierOverrides,f.id)?tierOverrides[f.id]:f.tier)};
   });
+  // Manually add an extra evaluator slot to a board — the dropdown offers
+  // the normal family-eligible faculty first, but also lists everyone else
+  // so admin can hand-pick someone outside the automatic pairing rules.
+  const addEvaluator=(bi)=>update(r=>{ r.boards[bi].evaluators.push({id:"",name:"",designation:"",cell:"",code:"",tier:null}); });
+  const removeEvaluator=(bi,ei)=>update(r=>{ r.boards[bi].evaluators.splice(ei,1); });
 
   const setGroupField=(bi,gi,field,val)=>update(r=>{ r.boards[bi].groups[gi][field]=val; if(field==="type")recomposition(r.boards[bi],r.separateByType); });
 
@@ -1278,6 +1306,13 @@ function EditableBoards({result,faculty,tierOverrides,update}){
 
   return (
     <div>
+      <div className="toolbar ui" style={{marginTop:0}}>
+        <span className="note">Need an extra panel?</span>
+        <select className="mini" value={newFamily} onChange={e=>setNewFamily(e.target.value)}>
+          {FAMILIES.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}
+        </select>
+        <button className="btn ghost" onClick={()=>addBoard(newFamily)}>+ Add new board</button>
+      </div>
       {boards.map((b,bi)=>(
         <div className="card board" key={b.boardId}>
           <div className="bhead">
@@ -1310,16 +1345,29 @@ function EditableBoards({result,faculty,tierOverrides,update}){
             <span className="note" style={{alignSelf:"center",marginRight:4}}>Evaluators:</span>
             {b.evaluators.map((e,ei)=>{
               const fam=FAMILIES.find(f=>f.id===b.family);
-              const opts=faculty.filter(f=>fam&&fam.cells.includes(f.cell)&&tierOf(f));
+              const eligible=faculty.filter(f=>fam&&fam.cells.includes(f.cell)&&tierOf(f));
+              const eligibleIds=new Set(eligible.map(f=>f.id));
+              const others=faculty.filter(f=>!eligibleIds.has(f.id));
+              const label=o=>`${o.name.replace(/^(Mr\.|Mrs\.|Ms\.|Prof\. Dr\.|Dr\.) /,"")} (${CELL_SHORT[o.cell]||o.cell})`;
               return (
                 <span className="ev" key={ei}>
                   <TierBadge t={e.tier}/>
                   <select className="evsel" value={e.id} onChange={ev=>setEvaluator(bi,ei,ev.target.value)}>
-                    {opts.map(o=><option key={o.id} value={o.id}>{o.name.replace(/^(Mr\.|Mrs\.|Ms\.|Prof\. Dr\.|Dr\.) /,"")} ({CELL_SHORT[o.cell]})</option>)}
+                    <option value="">— choose faculty —</option>
+                    <optgroup label="Eligible for this family">
+                      {eligible.map(o=><option key={o.id} value={o.id}>{label(o)}</option>)}
+                    </optgroup>
+                    {others.length>0 && (
+                      <optgroup label="Other faculty (manual add)">
+                        {others.map(o=><option key={o.id} value={o.id}>{label(o)}</option>)}
+                      </optgroup>
+                    )}
                   </select>
+                  <button className="xbtn" title="Remove this evaluator" onClick={()=>removeEvaluator(bi,ei)}>×</button>
                 </span>
               );
             })}
+            <button className="btn ghost" style={{padding:"6px 12px",fontSize:12}} onClick={()=>addEvaluator(bi)}>+ Add evaluator</button>
           </div>
 
           <div className="pad" style={{paddingTop:8}}>
