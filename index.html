@@ -1324,7 +1324,7 @@ function EditableBoards({result,faculty,tierOverrides,update}){
 
           <div className="pad" style={{paddingTop:8}}>
             <table>
-              <thead><tr><th>ID</th><th>Type</th><th>Title</th><th>Students</th><th>Supervisor (admin only)</th><th>Move</th><th></th></tr></thead>
+              <thead><tr><th>ID</th><th>Type</th><th>Cell</th><th>Title</th><th>Students</th><th>Supervisor (admin only)</th><th>Move</th><th></th></tr></thead>
               <tbody>
                 {b.groups.map((g,gi)=>(
                   <tr key={g.groupId+gi}>
@@ -1334,6 +1334,7 @@ function EditableBoards({result,faculty,tierOverrides,update}){
                         <option>Thesis</option><option>Project</option>
                       </select>
                     </td>
+                    <td><span className="pill" style={{padding:"3px 8px"}} title={CELLS[g.cell]||""}>{CELL_SHORT[g.cell]||g.cell||"—"}</span></td>
                     <td><input className="mini wide" value={g.title} onChange={e=>setGroupField(bi,gi,"title",e.target.value)}/></td>
                     <td className="muted" style={{fontSize:12}}>{(g.students||[]).join(", ")}</td>
                     <td style={{fontSize:12.5}}>{g.supervisor}{g.coSupervisor?` · ${g.coSupervisor}`:""}</td>
@@ -1365,12 +1366,13 @@ function EditableBoards({result,faculty,tierOverrides,update}){
           </div>
           <div className="pad">
             <table>
-              <thead><tr><th>ID</th><th>Type</th><th>Title</th><th>Supervisor</th><th>Reason</th><th>Assign</th><th></th></tr></thead>
+              <thead><tr><th>ID</th><th>Type</th><th>Cell</th><th>Title</th><th>Supervisor</th><th>Reason</th><th>Assign</th><th></th></tr></thead>
               <tbody>
                 {result.temporary.map((t,ti)=>(
                   <tr key={ti}>
                     <td><b className="ui">{t.group.publicId||t.group.groupId}</b></td>
                     <td><TypePill t={t.group.type}/></td>
+                    <td><span className="pill" style={{padding:"3px 8px"}} title={CELLS[t.group.cell]||""}>{CELL_SHORT[t.group.cell]||t.group.cell||"—"}</span></td>
                     <td>{t.group.title}</td>
                     <td className="muted" style={{fontSize:12}}>{t.group.supervisor||"—"}</td>
                     <td className="muted" style={{fontSize:11}}>{t.reason}</td>
@@ -1518,12 +1520,13 @@ function BoardCard({b,admin,onRoom}){
       </div>
       <div className="pad" style={{paddingTop:8}}>
         <table>
-          <thead><tr><th>{admin?"ID":"#"}</th><th>Type</th><th>Title</th><th>Students</th>{admin && <th>Supervisor</th>}</tr></thead>
+          <thead><tr><th>{admin?"ID":"#"}</th><th>Type</th>{admin && <th>Cell</th>}<th>Title</th><th>Students</th>{admin && <th>Supervisor</th>}</tr></thead>
           <tbody>
             {b.groups.map((g,gi)=>(
               <tr key={(g.publicId||g.groupId)+gi}>
                 <td><b className="ui">{admin ? (g.publicId||g.groupId) : (gi+1)}</b></td>
                 <td><TypePill t={g.type}/></td>
+                {admin && <td><span className="pill" style={{padding:"3px 8px"}} title={CELLS[g.cell]||""}>{CELL_SHORT[g.cell]||g.cell||"—"}</span></td>}
                 <td>{g.title}</td>
                 <td className="muted">{(g.students||[]).join(", ")}</td>
                 {admin && <td>{g.supervisor}{g.coSupervisor?` · ${g.coSupervisor}`:""}</td>}
@@ -1553,12 +1556,13 @@ function BoardList({boards,temporary,admin,onRoom}){
           </div>
           <div className="pad">
             <table>
-              <thead><tr><th>Group</th><th>Type</th><th>Title</th><th>Supervisor</th><th>Reason</th></tr></thead>
+              <thead><tr><th>Group</th><th>Type</th><th>Cell</th><th>Title</th><th>Supervisor</th><th>Reason</th></tr></thead>
               <tbody>
                 {temporary.map((t,i)=>(
                   <tr key={i}>
                     <td><b className="ui">{t.group.groupId}</b></td>
                     <td><TypePill t={t.group.type}/></td>
+                    <td><span className="pill" style={{padding:"3px 8px"}} title={CELLS[t.group.cell]||""}>{CELL_SHORT[t.group.cell]||t.group.cell||"—"}</span></td>
                     <td>{t.group.title}</td>
                     <td>{t.group.supervisor||"—"}</td>
                     <td className="muted" style={{fontSize:12}}>{t.reason}</td>
