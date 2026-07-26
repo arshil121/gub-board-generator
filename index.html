@@ -303,6 +303,11 @@ const CELL_SHORT = { AIML:"AI/ML", NLP:"NLP", CV:"CV", BIO:"Bio", GREEN:"Green",
 const boardLabel = (id)=>{ const m=/^B0*(\d+)$/.exec(String(id||"")); return m?`Board ${m[1]}`:String(id||""); };
 // Display name for a board: an admin-set custom name if present, else the default "Board N".
 const boardName = (b)=> (b && b.name && b.name.trim()) ? b.name.trim() : boardLabel(b?.boardId);
+// "Name (ID)" <-> {name, id} for editable student fields.
+const parseStudent = (s)=>{ const str=String(s||""); const m=/^(.*)\((.*)\)\s*$/.exec(str.trim());
+  return m ? {name:m[1].trim(), id:m[2].trim()} : {name:str.trim(), id:""}; };
+const formatStudent = (name,id)=>{ const nm=String(name||"").trim(), sid=String(id||"").trim();
+  return nm ? (sid?`${nm} (${sid})`:nm) : sid; };
 // Pretty date: "2026-06-13" -> "Sat, 13 Jun 2026". Empty -> "TBA".
 const fmtDate = (d)=>{ if(!d)return "TBA"; const dt=new Date(d+"T00:00:00"); if(isNaN(dt))return d;
   return dt.toLocaleDateString("en-GB",{weekday:"short",day:"2-digit",month:"short",year:"numeric"}); };
@@ -1298,6 +1303,26 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
 
   const setGroupField=(bi,gi,field,val)=>update(r=>{ r.boards[bi].groups[gi][field]=val; if(field==="type")recomposition(r.boards[bi],r.separateByType); });
 
+  // Board number (boardId, e.g. "B01") — distinct from the free-text display name.
+  const setBoardId=(bi,val)=>update(r=>{
+    const v=String(val||"").trim(); if(!v)return;
+    r.boards[bi].boardId=v;
+  });
+
+  // Per-student name/ID editing within a group.
+  const setStudentField=(bi,gi,si,field,val)=>update(r=>{
+    const list=r.boards[bi].groups[gi].students||(r.boards[bi].groups[gi].students=[]);
+    const {name,id}=parseStudent(list[si]);
+    const next=field==="name"?{name:val,id}:{name,id:val};
+    list[si]=formatStudent(next.name,next.id);
+  });
+  const addStudentToGroup=(bi,gi)=>update(r=>{
+    const g=r.boards[bi].groups[gi]; (g.students||(g.students=[])).push("");
+  });
+  const removeStudentFromGroup=(bi,gi,si)=>update(r=>{
+    r.boards[bi].groups[gi].students.splice(si,1);
+  });
+
   const deleteBoard=(bi)=>update(r=>{
     const board=r.boards[bi];
     for(const g of board.groups){
@@ -1318,6 +1343,10 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
       {boards.map((b,bi)=>(
         <div className="card board" key={b.boardId}>
           <div className="bhead">
+            <input className="ui" value={b.boardId} title="Board number / ID (e.g. B01) — used internally, keep it unique"
+              onChange={e=>setBoardId(bi,e.target.value)}
+              style={{font:"800 12px/1 ui-sans-serif",letterSpacing:".04em",color:"var(--moss-700)",background:"#fff",
+                padding:"8px 9px",borderRadius:9,border:"1px solid var(--moss)",width:64,textAlign:"center"}}/>
             <input className="ui" value={b.name ?? boardLabel(b.boardId)} title="Click to rename this board"
               onChange={e=>setBoardField(bi,"name",e.target.value)}
               style={{font:"800 13px/1 ui-sans-serif",letterSpacing:".06em",color:"#fff",background:"var(--moss)",
@@ -1408,7 +1437,23 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
                     </td>
                     <td><span className="pill" style={{padding:"3px 8px"}} title={CELLS[g.cell]||""}>{CELL_SHORT[g.cell]||g.cell||"—"}</span></td>
                     <td><input className="mini wide" value={g.title} onChange={e=>setGroupField(bi,gi,"title",e.target.value)}/></td>
-                    <td className="muted" style={{fontSize:12}}>{(g.students||[]).join(", ")}</td>
+                    <td style={{minWidth:220}}>
+                      {(g.students||[]).map((s,si)=>{
+                        const {name,id}=parseStudent(s);
+                        return (
+                          <div key={si} style={{display:"flex",gap:4,marginBottom:4,alignItems:"center"}}>
+                            <input className="mini" placeholder="Name" value={name}
+                              onChange={e=>setStudentField(bi,gi,si,"name",e.target.value)}
+                              style={{width:110}}/>
+                            <input className="mini" placeholder="ID" value={id}
+                              onChange={e=>setStudentField(bi,gi,si,"id",e.target.value)}
+                              style={{width:90}}/>
+                            <button className="xbtn" title="Remove this student" onClick={()=>removeStudentFromGroup(bi,gi,si)}>×</button>
+                          </div>
+                        );
+                      })}
+                      <button className="linkbtn" onClick={()=>addStudentToGroup(bi,gi)}>+ Add student</button>
+                    </td>
                     <td style={{fontSize:12.5}}>{g.supervisor}{g.coSupervisor?` · ${g.coSupervisor}`:""}</td>
                     <td>
                       <select className="mini" value="" onChange={e=>{ if(e.target.value!=="")moveGroup(bi,gi,e.target.value); }}>
