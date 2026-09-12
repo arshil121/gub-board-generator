@@ -269,6 +269,13 @@
   .stat b{font:700 20px/1 ui-sans-serif}
   .banner{background:var(--moss-100);border:1px solid #bcd3c3;border-radius:10px;padding:11px 14px;
     font:500 13px/1.4 ui-sans-serif;color:var(--moss-700);margin-bottom:16px}
+  .manual-form{background:#fbf9f1;border-color:#bcd3c3;margin:10px 0 18px}
+  .manual-form h3{font:700 15px/1.3 ui-sans-serif;color:var(--moss-700);margin:0}
+  .manual-form .field input,.manual-form .field select{background:#fff}
+  .manual-evaluators{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .manual-evaluator{display:flex;align-items:center;gap:5px}
+  .manual-evaluator select{min-width:220px;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:#fff;font-size:13px}
+  .manual-actions{display:flex;gap:10px;justify-content:flex-end;align-items:center;flex-wrap:wrap;margin-top:18px}
   @media (max-width:780px){.grid2,.grid3,.grid4{grid-template-columns:1fr}}
   /* very narrow phones: drop the brand text, keep the logo */
   @media (max-width:420px){
@@ -1119,6 +1126,7 @@ function StepGenerate({store,setStore}){
         rows.push({
           Board:b.boardId, Family:b.family, Cells:b.cells.join("/"),
           Slot:(b.slot?.label||b.slot?.id||""), Date:b.date||"", Room:b.room||"",
+          Note:b.note||"",
           Evaluators:b.evaluators.map(e=>`${e.name} (${e.tier})`).join("; "),
           Pairing:b.pairingRule, "Group ID":g.publicId, Type:g.type, Title:g.title,
           Students:(g.students||[]).join("; "),
@@ -1238,10 +1246,127 @@ function recomposition(board,separateByType){
   board.cells=[...new Set(board.groups.map(g=>g.cell))];
 }
 
+function nextBoardId(boards){
+  const nums=(boards||[]).map(b=>{
+    const m=/^B0*(\d+)$/i.exec(String(b.boardId||""));
+    return m?+m[1]:0;
+  });
+  const next=(nums.length?Math.max(...nums):0)+1;
+  return `B${String(next).padStart(2,"0")}`;
+}
+
+function ManualBoardForm({boards,faculty,tierOverrides,evaluatorCount,onAdd,onCancel}){
+  const [form,setForm]=useState(()=>({
+    boardId:nextBoardId(boards),
+    name:"",
+    family:FAMILIES[0].id,
+    date:"",
+    time:"",
+    room:"",
+    evaluatorIds:Array.from({length:Math.max(2,evaluatorCount||2)},()=>"")
+  }));
+  const [error,setError]=useState("");
+  const tierOf=(f)=>Object.prototype.hasOwnProperty.call(tierOverrides,f.id)?tierOverrides[f.id]:f.tier;
+  const label=(f)=>`${f.name.replace(/^(Mr\.|Mrs\.|Ms\.|Prof\. Dr\.|Dr\.) /,"")} (${CELL_SHORT[f.cell]||f.cell}${tierOf(f)?` · ${tierOf(f)}`:""})`;
+  const setField=(key,value)=>setForm(x=>({...x,[key]:value}));
+  const setEvaluator=(index,value)=>setForm(x=>({...x,evaluatorIds:x.evaluatorIds.map((id,i)=>i===index?value:id)}));
+  const addEvaluator=()=>setForm(x=>({...x,evaluatorIds:[...x.evaluatorIds,""]}));
+  const removeEvaluator=(index)=>setForm(x=>({...x,evaluatorIds:x.evaluatorIds.filter((_,i)=>i!==index)}));
+
+  const submit=()=>{
+    const boardId=(form.boardId||"").trim()||nextBoardId(boards);
+    const selectedEvaluators=(form.evaluatorIds||[]).filter(Boolean);
+    if(new Set(selectedEvaluators).size!==selectedEvaluators.length){
+      setError("Select each evaluator only once for this board.");
+      return;
+    }
+    if(boards.some(b=>String(b.boardId||"").trim().toLowerCase()===boardId.toLowerCase())){
+      setError(`Board ID "${boardId}" is already in use. Enter a different ID.`);
+      return;
+    }
+    onAdd({...form,boardId});
+  };
+
+  return (
+    <div className="card pad manual-form">
+      <div style={{display:"flex",alignItems:"flex-start",gap:12,justifyContent:"space-between",flexWrap:"wrap"}}>
+        <div>
+          <h3>Enter board details manually</h3>
+          <p className="note" style={{margin:"4px 0 0"}}>
+            Create a board with its schedule information first. You can add evaluators now and move imported groups into it afterward.
+          </p>
+        </div>
+        <span className="pill" style={{background:"var(--moss-100)",borderColor:"#bcd3c3",color:"var(--moss-700)"}}>Manual board</span>
+      </div>
+
+      <div className="grid4" style={{marginTop:16}}>
+        <div className="field">
+          <label>Board ID</label>
+          <input value={form.boardId} placeholder="e.g. B09" onChange={e=>setField("boardId",e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Board name</label>
+          <input value={form.name} placeholder="Defaults to Board N" onChange={e=>setField("name",e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Research family</label>
+          <select value={form.family} onChange={e=>setField("family",e.target.value)}>
+            {FAMILIES.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label>Room</label>
+          <input value={form.room} placeholder="e.g. 402" onChange={e=>setField("room",e.target.value)} />
+        </div>
+      </div>
+
+      <div className="grid3" style={{marginTop:14}}>
+        <div className="field">
+          <label>Date</label>
+          <input type="date" value={form.date} onChange={e=>setField("date",e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Time window</label>
+          <input value={form.time} placeholder="e.g. 2:30pm – 4:30pm" onChange={e=>setField("time",e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Board note (optional)</label>
+          <input value={form.note||""} placeholder="Optional admin note" onChange={e=>setField("note",e.target.value)} />
+        </div>
+      </div>
+
+      <div style={{marginTop:16}}>
+        <div className="field">
+          <label>Evaluators (optional)</label>
+          <div className="manual-evaluators">
+            {form.evaluatorIds.map((id,index)=>(
+              <span className="manual-evaluator" key={index}>
+                <select value={id} onChange={e=>setEvaluator(index,e.target.value)}>
+                  <option value="">— choose faculty —</option>
+                  {faculty.map(f=><option key={f.id} value={f.id}>{label(f)}</option>)}
+                </select>
+                <button className="xbtn" title="Remove this evaluator field" onClick={()=>removeEvaluator(index)}>×</button>
+              </span>
+            ))}
+            <button className="btn ghost" style={{padding:"8px 12px",fontSize:12}} onClick={addEvaluator}>+ Add evaluator</button>
+          </div>
+        </div>
+      </div>
+
+      {error && <div className="banner" style={{marginTop:14,marginBottom:0,background:"#fdf6f1",borderColor:"#e6c3ad",color:"var(--clay)"}}>{error}</div>}
+      <div className="manual-actions">
+        <button className="btn ghost" onClick={onCancel}>Cancel</button>
+        <button className="btn" onClick={submit}>Add board</button>
+      </div>
+    </div>
+  );
+}
+
 function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
   const boards=result.boards;
   const tierOf=(f)=> Object.prototype.hasOwnProperty.call(tierOverrides,f.id)?tierOverrides[f.id]:f.tier;
   const [newFamily,setNewFamily]=useState(FAMILIES[0].id);
+  const [showManualForm,setShowManualForm]=useState(false);
 
   const setBoardField=(bi,field,val)=>update(r=>{ r.boards[bi][field]=val; });
 
@@ -1251,15 +1376,36 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
   // "Move to…" control or a Temporary group's "Assign to…" control) and
   // evaluators picked from the chosen family's eligible faculty.
   const addBoard=(familyId)=>update(r=>{
-    const nums=r.boards.map(b=>{ const m=/^B0*(\d+)$/.exec(String(b.boardId||"")); return m?+m[1]:0; });
-    const nextNum=(nums.length?Math.max(...nums):0)+1;
+    const boardId=nextBoardId(r.boards);
     r.boards.push({
-      boardId:`B${String(nextNum).padStart(2,"0")}`,
+      boardId,
       family:familyId,
       cells:[], slot:{id:"custom",label:""}, date:null, room:null,
       composition:"0T+0P", compositionOk:true,
       sizeNote:"New board — add groups and evaluators.",
       evaluators:Array.from({length:Math.max(2,evaluatorCount||2)},()=>({id:"",name:"",designation:"",cell:"",code:"",tier:null})),
+      pairingRule:"manual",
+      groups:[],
+    });
+  });
+
+  const addManualBoard=(details)=>update(r=>{
+    const familyId=details.family||FAMILIES[0].id;
+    const chosen=(details.evaluatorIds||[]).map(fid=>faculty.find(f=>f.id===fid)).filter(Boolean);
+    const boardId=String(details.boardId||nextBoardId(r.boards)).trim();
+    r.boards.push({
+      boardId,
+      name:String(details.name||"").trim()||boardLabel(boardId),
+      family:familyId,
+      cells:[],
+      slot:{id:`manual-${boardId}`,label:String(details.time||"").trim()},
+      date:details.date||null,
+      room:String(details.room||"").trim()||null,
+      note:String(details.note||"").trim(),
+      composition:"0T+0P",
+      compositionOk:true,
+      sizeNote:"Manual board — add groups as needed.",
+      evaluators:chosen.map(f=>({id:f.id,name:f.name,designation:f.designation,cell:f.cell,code:f.code,tier:tierOf(f)})),
       pairingRule:"manual",
       groups:[],
     });
@@ -1338,8 +1484,15 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
         <select className="mini" value={newFamily} onChange={e=>setNewFamily(e.target.value)}>
           {FAMILIES.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}
         </select>
-        <button className="btn ghost" onClick={()=>addBoard(newFamily)}>+ Add new board</button>
+        <button className="btn ghost" onClick={()=>addBoard(newFamily)}>+ Add empty board</button>
+        <button className="btn" onClick={()=>setShowManualForm(true)}>+ Add board manually</button>
       </div>
+      {showManualForm && (
+        <ManualBoardForm boards={boards} faculty={faculty} tierOverrides={tierOverrides}
+          evaluatorCount={evaluatorCount}
+          onAdd={details=>{addManualBoard(details);setShowManualForm(false);}}
+          onCancel={()=>setShowManualForm(false)} />
+      )}
       {boards.map((b,bi)=>(
         <div className="card board" key={b.boardId}>
           <div className="bhead">
@@ -1356,6 +1509,7 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
                 <span><b>{cellComp(b)}</b></span>
                 <span className="pill" style={{padding:"3px 8px"}}>pairing {b.pairingRule}</span>
                 {b.sizeNote && <span className="pill" style={{padding:"3px 8px",background:"#fdf6f1",borderColor:"#e6c3ad",color:"var(--clay)"}}>⚠ {b.sizeNote}</span>}
+                {b.note && <span className="pill" style={{padding:"3px 8px"}}>📝 {b.note}</span>}
                 <button className="delboard" title="Delete this board (its groups move to Temporary)"
                   onClick={()=>{ if(confirm(`Delete ${boardName(b)}? Its ${b.groups.length} group(s) will move to the Temporary board for reassignment.`)) deleteBoard(bi); }}>
                   Delete board
