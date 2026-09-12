@@ -1365,29 +1365,9 @@ function ManualBoardForm({boards,faculty,tierOverrides,evaluatorCount,onAdd,onCa
 function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
   const boards=result.boards;
   const tierOf=(f)=> Object.prototype.hasOwnProperty.call(tierOverrides,f.id)?tierOverrides[f.id]:f.tier;
-  const [newFamily,setNewFamily]=useState(FAMILIES[0].id);
   const [showManualForm,setShowManualForm]=useState(false);
 
   const setBoardField=(bi,field,val)=>update(r=>{ r.boards[bi][field]=val; });
-
-  // Manually add a brand-new, empty board (e.g. for an ad-hoc panel that
-  // wasn't produced by the generator). Its ID continues the existing B01,
-  // B02… sequence. Groups can then be moved into it (via each group's
-  // "Move to…" control or a Temporary group's "Assign to…" control) and
-  // evaluators picked from the chosen family's eligible faculty.
-  const addBoard=(familyId)=>update(r=>{
-    const boardId=nextBoardId(r.boards);
-    r.boards.push({
-      boardId,
-      family:familyId,
-      cells:[], slot:{id:"custom",label:""}, date:null, room:null,
-      composition:"0T+0P", compositionOk:true,
-      sizeNote:"New board — add groups and evaluators.",
-      evaluators:Array.from({length:Math.max(2,evaluatorCount||2)},()=>({id:"",name:"",designation:"",cell:"",code:"",tier:null})),
-      pairingRule:"manual",
-      groups:[],
-    });
-  });
 
   const addManualBoard=(details)=>update(r=>{
     const familyId=details.family||FAMILIES[0].id;
@@ -1480,11 +1460,7 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
   return (
     <div>
       <div className="toolbar ui" style={{marginTop:0}}>
-        <span className="note">Need an extra panel?</span>
-        <select className="mini" value={newFamily} onChange={e=>setNewFamily(e.target.value)}>
-          {FAMILIES.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}
-        </select>
-        <button className="btn ghost" onClick={()=>addBoard(newFamily)}>+ Add empty board</button>
+        <span className="note">Need an extra panel? Enter its details manually.</span>
         <button className="btn" onClick={()=>setShowManualForm(true)}>+ Add board manually</button>
       </div>
       {showManualForm && (
@@ -1508,7 +1484,9 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
               <div className="bmeta" style={{alignItems:"center"}}>
                 <span><b>{cellComp(b)}</b></span>
                 <span className="pill" style={{padding:"3px 8px"}}>pairing {b.pairingRule}</span>
-                {b.sizeNote && <span className="pill" style={{padding:"3px 8px",background:"#fdf6f1",borderColor:"#e6c3ad",color:"var(--clay)"}}>⚠ {b.sizeNote}</span>}
+                {b.pairingRule==="manual" && b.groups.length===0
+                  ? <span className="pill" style={{padding:"3px 8px",background:"var(--moss-100)",borderColor:"#bcd3c3",color:"var(--moss-700)"}}>Manual details</span>
+                  : b.sizeNote && <span className="pill" style={{padding:"3px 8px",background:"#fdf6f1",borderColor:"#e6c3ad",color:"var(--clay)"}}>⚠ {b.sizeNote}</span>}
                 {b.note && <span className="pill" style={{padding:"3px 8px"}}>📝 {b.note}</span>}
                 <button className="delboard" title="Delete this board (its groups move to Temporary)"
                   onClick={()=>{ if(confirm(`Delete ${boardName(b)}? Its ${b.groups.length} group(s) will move to the Temporary board for reassignment.`)) deleteBoard(bi); }}>
