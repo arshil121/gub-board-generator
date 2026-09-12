@@ -276,6 +276,10 @@
   .manual-evaluator{display:flex;align-items:center;gap:5px}
   .manual-evaluator select{min-width:220px;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:#fff;font-size:13px}
   .manual-actions{display:flex;gap:10px;justify-content:flex-end;align-items:center;flex-wrap:wrap;margin-top:18px}
+  .manual-group-form{background:#fffef9;border-color:var(--line);margin:0 0 14px}
+  .manual-students{display:flex;flex-direction:column;gap:6px}
+  .manual-student-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .manual-student-row input{padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:13px}
   @media (max-width:780px){.grid2,.grid3,.grid4{grid-template-columns:1fr}}
   /* very narrow phones: drop the brand text, keep the logo */
   @media (max-width:420px){
@@ -1362,10 +1366,136 @@ function ManualBoardForm({boards,faculty,tierOverrides,evaluatorCount,onAdd,onCa
   );
 }
 
+function resultGroupIds(result){
+  const ids=new Set();
+  (result?.boards||[]).forEach(b=>(b.groups||[]).forEach(g=>{
+    if(g.groupId)ids.add(String(g.groupId).trim().toLowerCase());
+    if(g.publicId)ids.add(String(g.publicId).trim().toLowerCase());
+  }));
+  (result?.temporary||[]).forEach(t=>{
+    const g=t.group||{};
+    if(g.groupId)ids.add(String(g.groupId).trim().toLowerCase());
+    if(g.publicId)ids.add(String(g.publicId).trim().toLowerCase());
+  });
+  return ids;
+}
+
+function nextManualGroupId(result){
+  const ids=resultGroupIds(result);
+  for(let i=1;i<10000;i++){
+    const id=`G-M${String(i).padStart(2,"0")}`;
+    if(!ids.has(id.toLowerCase()))return id;
+  }
+  return `G-M${Date.now()}`;
+}
+
+function ManualGroupForm({result,board,onAdd,onCancel}){
+  const family=FAMILIES.find(f=>f.id===board.family);
+  const cellOptions=(board.cells&&board.cells.length?board.cells:(family?.cells||Object.keys(CELLS))).filter(c=>CELLS[c]);
+  const [form,setForm]=useState(()=>({
+    groupId:nextManualGroupId(result),
+    type:"Thesis",
+    cell:cellOptions[0]||"",
+    title:"",
+    supervisor:"",
+    coSupervisor:"",
+    students:[{name:"",id:""}]
+  }));
+  const [error,setError]=useState("");
+  const setField=(key,value)=>setForm(x=>({...x,[key]:value}));
+  const setStudent=(index,key,value)=>setForm(x=>({...x,students:x.students.map((s,i)=>i===index?{...s,[key]:value}:s)}));
+  const addStudent=()=>setForm(x=>({...x,students:[...x.students,{name:"",id:""}]}));
+  const removeStudent=(index)=>setForm(x=>({...x,students:x.students.filter((_,i)=>i!==index)}));
+
+  const submit=()=>{
+    const groupId=(form.groupId||"").trim()||nextManualGroupId(result);
+    if(resultGroupIds(result).has(groupId.toLowerCase())){
+      setError(`Group ID "${groupId}" is already in use. Enter a different ID.`);
+      return;
+    }
+    if(!(form.title||"").trim()){
+      setError("Enter a project or thesis title.");
+      return;
+    }
+    const students=form.students.map(s=>formatStudent(s.name,s.id)).filter(Boolean);
+    if(!students.length){
+      setError("Add at least one student name or ID.");
+      return;
+    }
+    onAdd({...form,groupId,publicId:groupId,title:form.title.trim(),students});
+  };
+
+  return (
+    <div className="card pad manual-group-form">
+      <h3>Add group manually to {boardName(board)}</h3>
+      <p className="note" style={{margin:"4px 0 14px"}}>
+        Fill in the row details below. The new group will be added directly to this board.
+      </p>
+
+      <div className="grid4">
+        <div className="field">
+          <label>Group ID / public ID</label>
+          <input value={form.groupId} placeholder="e.g. G-M01" onChange={e=>setField("groupId",e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Type</label>
+          <select value={form.type} onChange={e=>setField("type",e.target.value)}>
+            <option>Thesis</option><option>Project</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>Research cell</label>
+          <select value={form.cell} onChange={e=>setField("cell",e.target.value)}>
+            {cellOptions.map(c=><option key={c} value={c}>{CELL_SHORT[c]||c} — {CELLS[c]}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label>Title</label>
+          <input value={form.title} placeholder="Project or thesis title" onChange={e=>setField("title",e.target.value)} />
+        </div>
+      </div>
+
+      <div className="grid2" style={{marginTop:14}}>
+        <div className="field">
+          <label>Supervisor (admin only)</label>
+          <input value={form.supervisor} placeholder="Supervisor name" onChange={e=>setField("supervisor",e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Co-supervisor (admin only)</label>
+          <input value={form.coSupervisor} placeholder="Co-supervisor name (optional)" onChange={e=>setField("coSupervisor",e.target.value)} />
+        </div>
+      </div>
+
+      <div style={{marginTop:14}}>
+        <div className="field">
+          <label>Students</label>
+          <div className="manual-students">
+            {form.students.map((s,index)=>(
+              <div className="manual-student-row" key={index}>
+                <input placeholder="Student name" value={s.name} onChange={e=>setStudent(index,"name",e.target.value)} style={{flex:"1 1 220px"}} />
+                <input placeholder="Student ID" value={s.id} onChange={e=>setStudent(index,"id",e.target.value)} style={{flex:"0 1 150px"}} />
+                <button className="xbtn" title="Remove this student" onClick={()=>removeStudent(index)}>×</button>
+              </div>
+            ))}
+          </div>
+          <button className="linkbtn" style={{marginLeft:0,marginTop:7}} onClick={addStudent}>+ Add student</button>
+        </div>
+      </div>
+
+      {error && <div className="banner" style={{marginTop:14,marginBottom:0,background:"#fdf6f1",borderColor:"#e6c3ad",color:"var(--clay)"}}>{error}</div>}
+      <div className="manual-actions">
+        <button className="btn ghost" onClick={onCancel}>Cancel</button>
+        <button className="btn" onClick={submit}>Add group</button>
+      </div>
+    </div>
+  );
+}
+
 function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
   const boards=result.boards;
   const tierOf=(f)=> Object.prototype.hasOwnProperty.call(tierOverrides,f.id)?tierOverrides[f.id]:f.tier;
   const [showManualForm,setShowManualForm]=useState(false);
+  const [manualGroupBoard,setManualGroupBoard]=useState(null);
 
   const setBoardField=(bi,field,val)=>update(r=>{ r.boards[bi][field]=val; });
 
@@ -1389,6 +1519,25 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
       pairingRule:"manual",
       groups:[],
     });
+  });
+
+  const addManualGroup=(bi,details)=>update(r=>{
+    const board=r.boards[bi];
+    board.groups.push({
+      groupId:details.groupId,
+      publicId:details.publicId||details.groupId,
+      title:details.title,
+      type:details.type,
+      students:details.students||[],
+      supervisor:details.supervisor||"",
+      coSupervisor:details.coSupervisor||"",
+      cell:details.cell,
+      program:"",
+      confirmed:"yes",
+      requiredChanges:"",
+    });
+    board.sizeNote="";
+    recomposition(board,r.separateByType);
   });
 
   const moveGroup=(fromBi,gi,toBi)=>update(r=>{
@@ -1486,7 +1635,7 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
                 <span className="pill" style={{padding:"3px 8px"}}>pairing {b.pairingRule}</span>
                 {b.pairingRule==="manual" && b.groups.length===0
                   ? <span className="pill" style={{padding:"3px 8px",background:"var(--moss-100)",borderColor:"#bcd3c3",color:"var(--moss-700)"}}>Manual details</span>
-                  : b.sizeNote && <span className="pill" style={{padding:"3px 8px",background:"#fdf6f1",borderColor:"#e6c3ad",color:"var(--clay)"}}>⚠ {b.sizeNote}</span>}
+                  : b.sizeNote && b.pairingRule!=="manual" && <span className="pill" style={{padding:"3px 8px",background:"#fdf6f1",borderColor:"#e6c3ad",color:"var(--clay)"}}>⚠ {b.sizeNote}</span>}
                 {b.note && <span className="pill" style={{padding:"3px 8px"}}>📝 {b.note}</span>}
                 <button className="delboard" title="Delete this board (its groups move to Temporary)"
                   onClick={()=>{ if(confirm(`Delete ${boardName(b)}? Its ${b.groups.length} group(s) will move to the Temporary board for reassignment.`)) deleteBoard(bi); }}>
@@ -1556,6 +1705,17 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
           </div>
 
           <div className="pad" style={{paddingTop:8}}>
+            <div className="toolbar ui" style={{marginTop:0,marginBottom:10}}>
+              <button className="btn ghost" onClick={()=>setManualGroupBoard(manualGroupBoard===bi?null:bi)}>
+                {manualGroupBoard===bi ? "× Close group form" : "+ Add group manually"}
+              </button>
+              {b.groups.length===0 && <span className="note">This board is empty. Add a group manually or move an imported group here.</span>}
+            </div>
+            {manualGroupBoard===bi && (
+              <ManualGroupForm result={result} board={b}
+                onAdd={details=>{addManualGroup(bi,details);setManualGroupBoard(null);}}
+                onCancel={()=>setManualGroupBoard(null)} />
+            )}
             <table>
               <thead><tr><th>ID</th><th>Type</th><th>Cell</th><th>Title</th><th>Students</th><th>Supervisor (admin only)</th><th>Move</th><th></th></tr></thead>
               <tbody>
