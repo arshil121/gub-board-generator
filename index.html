@@ -290,6 +290,33 @@
   .manual-students{display:flex;flex-direction:column;gap:6px}
   .manual-student-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
   .manual-student-row input{padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:13px}
+  /* ---- title change requests ---- */
+  textarea{font-family:ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .field textarea{padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#fff;font-size:14px;resize:vertical;min-height:84px}
+  .reqbtn{margin-top:7px;background:none;border:0;padding:0;color:var(--moss-700);
+    font:600 12px/1.2 ui-sans-serif;text-decoration:underline;cursor:pointer}
+  .reqbtn:hover{color:var(--moss)}
+  .modal-bg{position:fixed;inset:0;background:rgba(20,32,26,.48);z-index:100;display:grid;place-items:center;padding:16px}
+  .modal{width:100%;max-width:540px;max-height:92vh;overflow:auto;background:var(--card);
+    border:1px solid var(--line);border-radius:var(--r);box-shadow:0 20px 60px rgba(20,32,26,.28);padding:22px}
+  .modal h2{font:800 19px/1.25 ui-sans-serif;color:var(--moss-700);margin:0 0 4px}
+  .curtitle{background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:10px 12px;
+    font:600 13.5px/1.45 ui-sans-serif;color:var(--ink)}
+  .errbox{background:var(--clay-100);border:1px solid #e6c3ad;color:var(--clay);border-radius:9px;
+    padding:9px 12px;font:600 13px/1.4 ui-sans-serif;margin-top:12px}
+  .okbox{background:var(--moss-100);border:1px solid #bcd3c3;color:var(--moss-700);border-radius:9px;
+    padding:12px 14px;font:600 13.5px/1.5 ui-sans-serif}
+  .countbadge{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 7px;border-radius:999px;
+    background:var(--clay);color:#fff;font:800 12px/1 ui-sans-serif}
+  .req-item{border:1px solid var(--line);border-radius:12px;background:#fff;padding:14px 16px;margin-top:10px}
+  .req-item.accepted{background:#f3f8f4;border-color:#bcd3c3}
+  .req-item.rejected{background:#faf6f3;border-color:#e6c3ad}
+  .req-meta{font:500 12px/1.4 ui-sans-serif;color:var(--muted)}
+  .req-old{font:600 13.5px/1.45 ui-sans-serif;color:var(--muted);text-decoration:line-through;text-decoration-color:#c9a38f}
+  .req-new{font:700 14.5px/1.45 ui-sans-serif;color:var(--moss-700)}
+  .btn.danger{background:#fff;color:var(--clay);border-color:#e6c3ad}
+  .btn.danger:hover{background:var(--clay-100)}
+  @media (max-width:680px){.reqbtn{min-height:36px}.modal{padding:18px}}
   @media (max-width:780px){.grid2,.grid3,.grid4{grid-template-columns:1fr}}
   /* very narrow phones: drop the brand text, keep the logo */
   @media (max-width:420px){
@@ -312,6 +339,47 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 // stable slug from a semester name, e.g. "Spring 2026" -> "spring-2026"
 const slugify = (s) =>
   String(s||"").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+/* ---- Title-change requests ------------------------------------------------
+   Only Green University mails are accepted (e.g. shoab@cse.green.edu.bd or
+   anything@student.green.edu.bd). The same rule is enforced again in the
+   database (see title_requests.sql), so it can't be bypassed from the browser. */
+const GUB_EMAIL_DOMAIN = "green.edu.bd";
+const GUB_EMAIL_RE = /^[^\s@]+@([a-z0-9-]+\.)*green\.edu\.bd$/i;
+const isGubEmail = (e)=> GUB_EMAIL_RE.test(String(e||"").trim());
+
+// Replace the title of the group with this groupId inside a list of groups.
+const patchGroupsTitle = (arr,key,nt)=>{
+  let hit=false;
+  const out=(arr||[]).map(g=>{ if(g && g.groupId===key){ hit=true; return {...g,title:nt}; } return g; });
+  return {out,hit};
+};
+// Works on a published snapshot AND on the admin draft "result" ({boards,temporary,...}).
+const patchSnapshotTitle = (snap,key,nt)=>{
+  let found=false;
+  const boards=(snap.boards||[]).map(b=>{
+    const r=patchGroupsTitle(b.groups,key,nt);
+    if(r.hit){ found=true; return {...b,groups:r.out}; }
+    return b;
+  });
+  const temporary=(snap.temporary||[]).map(t=>{
+    if(t && t.group && t.group.groupId===key){ found=true; return {...t,group:{...t.group,title:nt}}; }
+    return t;
+  });
+  return {snap:{...snap,boards,temporary},found};
+};
+const patchStoreTitle = (s,key,nt)=>({
+  ...s,
+  groups: patchGroupsTitle(s.groups,key,nt).out,
+  result: s.result ? patchSnapshotTitle(s.result,key,nt).snap : s.result,
+});
+// Current title of a group in the admin draft (null if the group isn't there any more).
+const findTitleInStore = (s,key)=>{
+  for(const b of (s.result?.boards||[])) for(const g of (b.groups||[])) if(g.groupId===key) return g.title;
+  for(const t of (s.result?.temporary||[])) if(t.group && t.group.groupId===key) return t.group.title;
+  for(const g of (s.groups||[])) if(g.groupId===key) return g.title;
+  return null;
+};
 
 /* =======================================================================
    ENGINE  (identical logic to engine/data.js + engine/engine.js)
@@ -758,7 +826,7 @@ function Stat({n,label}){ return <div className="stat"><b>{n}</b><span className
 /* =======================================================================
    ADMIN  WIZARD
    ======================================================================= */
-function Admin({store,setStore,onExit,saveState,visible,onToggleVisible,onRename}){
+function Admin({slug,store,setStore,onExit,saveState,visible,onToggleVisible,onRename}){
   // The semester is already chosen (via SemesterPicker) before Admin mounts,
   // so we start at the first real step. Step is remembered in the store.
   const [step,setStep]=useState(()=> store.adminStep && store.adminStep>=1 ? store.adminStep : 1);
@@ -807,6 +875,8 @@ function Admin({store,setStore,onExit,saveState,visible,onToggleVisible,onRename
         </label>
         <span className="saveflag">{saveState}</span>
       </div>
+
+      <TitleRequestsPanel slug={slug} store={store} setStore={setStore} />
 
       <div className="steps" style={{marginTop:18}}>
         {steps.map((s,i)=>(
@@ -1946,7 +2016,95 @@ function Members({students}){
   );
 }
 
-function PortalBoardCard({b}){
+function TitleRequestModal({slug,board,group,onClose}){
+  const [email,setEmail]=useState("");
+  const [title,setTitle]=useState(group.title||"");
+  const [reason,setReason]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [err,setErr]=useState("");
+  const [done,setDone]=useState(false);
+
+  useEffect(()=>{
+    const onKey=(e)=>{ if(e.key==="Escape") onClose(); };
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[onClose]);
+
+  const submit=async (e)=>{
+    e.preventDefault();
+    if(busy) return;
+    const em=email.trim().toLowerCase();
+    const nt=title.trim().replace(/\s+/g," ");
+    if(!isGubEmail(em)){ setErr(`Only a Green University email can request a title change.`); return; }
+    if(nt.length<5){ setErr("Please enter the new title (at least 5 characters)."); return; }
+    if(nt.length>300){ setErr("The title is too long (max 300 characters)."); return; }
+    if(nt===String(group.title||"").trim()){ setErr("The new title is the same as the current title."); return; }
+    setBusy(true); setErr("");
+    const {error}=await sb.from("title_requests").insert({
+      semester_slug:slug,
+      board_id:board.boardId||null,
+      group_key:group.groupId,
+      old_title:group.title||"",
+      new_title:nt,
+      requester_email:em,
+      reason:reason.trim()||null,
+    });
+    setBusy(false);
+    if(error){
+      if(error.code==="23505") setErr("You already have a pending request for this group. Please wait for the admin to review it.");
+      else if(error.code==="23514"||error.code==="42501") setErr("This request was not accepted. Please check that you used your Green University email.");
+      else setErr("Couldn't send the request right now. Please try again shortly.");
+      return;
+    }
+    setDone(true);
+  };
+
+  return (
+    <div className="modal-bg" onMouseDown={(e)=>{ if(e.target===e.currentTarget) onClose(); }}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Request title change">
+        <h2>Request a title change</h2>
+        <div className="note" style={{marginBottom:14}}>{boardName(board)} · only Green University emails are accepted.</div>
+        {done ? (
+          <div>
+            <div className="okbox">✓ Your request was sent. The admin will review it, and if it is accepted the title on this page will be updated.</div>
+            <div className="toolbar" style={{marginTop:16}}>
+              <button className="btn" style={{marginLeft:"auto"}} onClick={onClose}>Close</button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={submit}>
+            <div className="field">
+              <label>Current title</label>
+              <div className="curtitle">{group.title}</div>
+            </div>
+            <div className="field" style={{marginTop:12}}>
+              <label>Your Green University email</label>
+              <input type="email" autoFocus value={email} placeholder={`name@cse.${GUB_EMAIL_DOMAIN}`}
+                onChange={e=>setEmail(e.target.value)} autoComplete="email" />
+            </div>
+            <div className="field" style={{marginTop:12}}>
+              <label>New title</label>
+              <textarea value={title} maxLength={300} onChange={e=>setTitle(e.target.value)} />
+            </div>
+            <div className="field" style={{marginTop:12}}>
+              <label>Reason (optional)</label>
+              <input value={reason} maxLength={500} placeholder="e.g. Supervisor suggested a clearer title"
+                onChange={e=>setReason(e.target.value)} />
+            </div>
+            {err && <div className="errbox">{err}</div>}
+            <div className="toolbar" style={{marginTop:16}}>
+              <button type="button" className="btn ghost" style={{marginLeft:"auto"}} onClick={onClose}>Cancel</button>
+              <button type="submit" className="btn" disabled={busy}>{busy?"Sending…":"Send request"}</button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PortalBoardCard({b,slug}){
+  const [reqGroup,setReqGroup]=useState(null);
   const initials=(name)=>String(name||"").replace(/^(Mr\.|Mrs\.|Ms\.|Md\.|Prof\.|Dr\.|Prof\. Dr\.)\s*/g,"")
     .split(/\s+/).filter(Boolean).slice(0,2).map(w=>w[0]).join("").toUpperCase();
   const avatar=(e)=> (e.code && e.code.trim()) ? e.code.trim() : initials(e.name);
@@ -2010,12 +2168,18 @@ function PortalBoardCard({b}){
             <tr key={(g.publicId||g.groupId)+gi}>
               <td data-label="#"><span className="rnum">{gi+1}</span></td>
               <td data-label="Type"><span className={"tbadge "+(g.type==="Thesis"?"t-thesis":"t-project")}>{g.type}</span></td>
-              <td data-label="Title"><div className="ptitle2" title={g.title}>{g.title}</div></td>
+              <td data-label="Title">
+                <div className="ptitle2" title={g.title}>{g.title}</div>
+                {slug && g.groupId && (
+                  <button className="reqbtn" onClick={()=>setReqGroup(g)}>✎ Request title change</button>
+                )}
+              </td>
               <td data-label="Students"><Members students={g.students}/></td>
             </tr>
           ))}
         </tbody>
       </table>
+      {reqGroup && <TitleRequestModal slug={slug} board={b} group={reqGroup} onClose={()=>setReqGroup(null)} />}
     </div>
   );
 }
@@ -2072,12 +2236,12 @@ function BoardCard({b,admin,onRoom}){
   );
 }
 
-function BoardList({boards,temporary,admin,onRoom}){
+function BoardList({boards,temporary,admin,onRoom,slug}){
   return (
     <div>
       {boards.map(b=> admin
         ? <BoardCard key={b.boardId} b={b} admin={admin} onRoom={onRoom} />
-        : <PortalBoardCard key={b.boardId} b={b} />)}
+        : <PortalBoardCard key={b.boardId} b={b} slug={slug} />)}
       {temporary && temporary.length>0 && (
         <div className="card board temp">
           <div className="bhead">
@@ -2211,7 +2375,7 @@ function PublicPortal(){
           {boardStatus==="error" && <div className="card empty">Couldn't load this schedule. Please try again.</div>}
           {boardStatus==="ok" && (
             filtered.boards.length
-              ? <BoardList boards={filtered.boards} temporary={[]} />
+              ? <BoardList boards={filtered.boards} temporary={[]} slug={sem.slug} />
               : <div className="card empty">
                   <div style={{fontSize:40,marginBottom:10}}>🔍</div>
                   <div style={{font:"700 16px/1.4 ui-sans-serif",color:"var(--ink)",marginBottom:6}}>No results found</div>
@@ -2249,9 +2413,158 @@ function makeDefaultState(name){
   };
 }
 
+/* =======================================================================
+   ADMIN: TITLE CHANGE REQUESTS (per semester)
+   Accept = patch the published snapshot in the database + the admin draft
+   (so the next Publish doesn't bring the old title back) + mark accepted.
+   Reject = just mark rejected. Every request is decided individually.
+   ======================================================================= */
+function TitleRequestsPanel({slug,store,setStore}){
+  const [rows,setRows]=useState([]);
+  const [status,setStatus]=useState("loading"); // loading | ok | error
+  const [showAll,setShowAll]=useState(false);
+  const [busyId,setBusyId]=useState(null);
+  const [err,setErr]=useState("");
+  const [open,setOpen]=useState(true);
+
+  const load=useCallback(()=>{
+    setStatus("loading");
+    sb.from("title_requests").select("*").eq("semester_slug",slug).order("created_at",{ascending:false})
+      .then(({data,error})=>{
+        if(error){ setStatus("error"); return; }
+        setRows(data||[]); setStatus("ok");
+      })
+      .catch(()=>setStatus("error"));
+  },[slug]);
+  useEffect(()=>{ load(); },[load]);
+
+  const pending=rows.filter(r=>r.status==="pending");
+  const shown=showAll?rows:pending;
+
+  const markDecided=async (r,st)=>{
+    const {error}=await sb.from("title_requests")
+      .update({status:st,decided_at:new Date().toISOString()}).eq("id",r.id);
+    return error;
+  };
+
+  const accept=async (r)=>{
+    if(busyId) return;
+    if(!window.confirm(`Accept this change?\n\nOLD: ${r.old_title}\nNEW: ${r.new_title}\n\nThe title will be updated on the student portal right away.`)) return;
+    setBusyId(r.id); setErr("");
+    try{
+      const inDraft = findTitleInStore(store,r.group_key)!==null;
+
+      // 1) live (published) snapshot in the database
+      const {data:sem,error:e1}=await sb.from("semesters").select("published").eq("slug",slug).single();
+      if(e1) throw new Error("Couldn't read the published schedule: "+e1.message);
+      let inPub=false;
+      if(sem && sem.published){
+        const np=patchSnapshotTitle(sem.published,r.group_key,r.new_title);
+        inPub=np.found;
+        if(np.found){
+          const {error:e2}=await sb.from("semesters")
+            .update({published:np.snap,updated_at:new Date().toISOString()}).eq("slug",slug);
+          if(e2) throw new Error("Couldn't update the published schedule: "+e2.message);
+        }
+      }
+      if(!inPub && !inDraft) throw new Error("This group no longer exists in the schedule, so its title can't be changed. You can reject the request.");
+
+      // 2) admin draft (auto-saves), so re-publishing keeps the new title
+      if(inDraft) setStore(s=>patchStoreTitle(s,r.group_key,r.new_title));
+
+      // 3) mark the request accepted
+      const e3=await markDecided(r,"accepted");
+      if(e3) throw new Error("Title was updated, but the request status couldn't be saved: "+e3.message);
+      load();
+    }catch(ex){
+      setErr(ex.message||"Something went wrong.");
+    }
+    setBusyId(null);
+  };
+
+  const reject=async (r)=>{
+    if(busyId) return;
+    if(!window.confirm(`Reject this request?\n\n${r.new_title}`)) return;
+    setBusyId(r.id); setErr("");
+    const e=await markDecided(r,"rejected");
+    if(e) setErr("Couldn't reject: "+e.message); else load();
+    setBusyId(null);
+  };
+
+  const fmtWhen=(t)=>{ try{ return new Date(t).toLocaleString(); }catch(_){ return t; } };
+
+  return (
+    <div className="card pad" style={{marginTop:18}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <h2 style={{fontSize:17}}>Title change requests</h2>
+        {pending.length>0 && <span className="countbadge">{pending.length}</span>}
+        <span style={{marginLeft:"auto",display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+          {open && (
+            <label className="ui" style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12.5,cursor:"pointer"}}>
+              <input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)} /> Show decided
+            </label>
+          )}
+          <button className="linkbtn" onClick={load}>Refresh</button>
+          <button className="linkbtn" onClick={()=>setOpen(o=>!o)}>{open?"Hide":"Show"}</button>
+        </span>
+      </div>
+
+      {open && (
+        <div>
+          {err && <div className="errbox">{err}</div>}
+          {status==="loading" && <p className="note" style={{marginTop:10}}>Loading requests…</p>}
+          {status==="error" && <p className="note" style={{marginTop:10,color:"var(--clay)"}}>Couldn't load requests. Make sure title_requests.sql has been run in Supabase.</p>}
+          {status==="ok" && !shown.length && (
+            <p className="note" style={{marginTop:10}}>{showAll?"No requests yet.":"No pending requests."}</p>
+          )}
+          {status==="ok" && shown.map(r=>{
+            const cur=findTitleInStore(store,r.group_key);
+            const changed = r.status==="pending" && cur!==null && cur!==r.old_title;
+            return (
+              <div key={r.id} className={"req-item "+(r.status!=="pending"?r.status:"")}>
+                <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                  <span className="pill">{r.board_id?boardLabel(r.board_id):"Board"}</span>
+                  <span className="pill">{r.group_key}</span>
+                  {r.status!=="pending" && (
+                    <span className="pill" style={r.status==="accepted"
+                      ?{background:"var(--moss-100)",color:"var(--moss-700)",borderColor:"#bcd3c3"}
+                      :{background:"var(--clay-100)",color:"var(--clay)",borderColor:"#e6c3ad"}}>
+                      {r.status==="accepted"?"✓ Accepted":"✕ Rejected"}
+                    </span>
+                  )}
+                  <span className="req-meta" style={{marginLeft:"auto"}}>{fmtWhen(r.created_at)}</span>
+                </div>
+                <div style={{marginTop:10}}>
+                  <div className="req-old">{r.old_title}</div>
+                  <div className="req-new" style={{marginTop:4}}>→ {r.new_title}</div>
+                </div>
+                <div className="req-meta" style={{marginTop:8}}>
+                  From <b>{r.requester_email}</b>{r.reason?<> · Reason: {r.reason}</>:null}
+                </div>
+                {changed && (
+                  <div className="req-meta" style={{marginTop:6,color:"var(--clay)"}}>
+                    ⚠ The group's title has changed since this request was made. Current: {cur}
+                  </div>
+                )}
+                {r.status==="pending" && (
+                  <div style={{display:"flex",gap:8,marginTop:12}}>
+                    <button className="btn" disabled={busyId===r.id} onClick={()=>accept(r)}>{busyId===r.id?"Working…":"Accept"}</button>
+                    <button className="btn danger" disabled={busyId===r.id} onClick={()=>reject(r)}>Reject</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SemesterPicker({onOpen}){
   const [status,setStatus]=useState("loading"); // loading | ok | error
   const [rows,setRows]=useState([]);            // [{slug,name,visible,published}]
+  const [pendingBySlug,setPendingBySlug]=useState({}); // {slug: pending title requests}
   const [newName,setNewName]=useState("");
   const [busy,setBusy]=useState(false);
   const [err,setErr]=useState("");
@@ -2264,6 +2577,14 @@ function SemesterPicker({onOpen}){
         setRows(data||[]); setStatus("ok");
       })
       .catch(()=>setStatus("error"));
+    // pending title-change requests per semester (ignored if the table isn't set up yet)
+    sb.from("title_requests").select("semester_slug").eq("status","pending")
+      .then(({data,error})=>{
+        if(error) return;
+        const m={}; (data||[]).forEach(x=>{ m[x.semester_slug]=(m[x.semester_slug]||0)+1; });
+        setPendingBySlug(m);
+      })
+      .catch(()=>{});
   };
   useEffect(load,[]);
 
@@ -2313,7 +2634,10 @@ function SemesterPicker({onOpen}){
       {status==="ok" && rows.map(r=>(
         <div key={r.slug} className="card pad" style={{marginBottom:10,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
           <div>
-            <div style={{font:"700 16px/1.3 ui-sans-serif"}}>{r.name}</div>
+            <div style={{font:"700 16px/1.3 ui-sans-serif",display:"flex",alignItems:"center",gap:8}}>
+              {r.name}
+              {pendingBySlug[r.slug]>0 && <span className="countbadge" title="Pending title change requests">{pendingBySlug[r.slug]}</span>}
+            </div>
             <div className="note">
               {r.published ? "Published" : "Draft only"} · {r.visible ? "visible to students" : "hidden"}
             </div>
@@ -2403,6 +2727,7 @@ function AdminWorkspace(){
   }
   return (
     <Admin
+      slug={slug}
       store={store} setStore={setStore}
       onExit={()=>{ clearTimeout(saveTimer.current); setSlug(null); }}
       saveState={saveState}
