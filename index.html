@@ -341,12 +341,9 @@ const slugify = (s) =>
   String(s||"").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 /* ---- Title-change requests ------------------------------------------------
-   Only Green University mails are accepted (e.g. shoab@cse.green.edu.bd or
-   anything@student.green.edu.bd). The same rule is enforced again in the
-   database (see title_requests.sql), so it can't be bypassed from the browser. */
-const GUB_EMAIL_DOMAIN = "green.edu.bd";
-const GUB_EMAIL_RE = /^[^\s@]+@([a-z0-9-]+\.)*green\.edu\.bd$/i;
-const isGubEmail = (e)=> GUB_EMAIL_RE.test(String(e||"").trim());
+   Only GUB CSE emails are accepted: the address must contain @cse.green.edu.bd.
+   The same rule is enforced in the database (see title_requests.sql). */
+const isGubEmail = (e)=> String(e||"").trim().toLowerCase().includes("@cse.green.edu.bd");
 
 // Replace the title of the group with this groupId inside a list of groups.
 const patchGroupsTitle = (arr,key,nt)=>{
