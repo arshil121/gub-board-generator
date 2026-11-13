@@ -1374,7 +1374,7 @@ function StepGenerate({store,setStore}){
             here for your review but are <b>hidden on the student portal</b>.
           </div>
 
-          <EditableBoards result={r} faculty={store.faculty} tierOverrides={store.tierOverrides} update={update} evaluatorCount={store.config.evaluatorCount} />
+          <EditableBoards result={r} faculty={store.faculty} tierOverrides={store.tierOverrides} update={update} evaluatorCount={store.config.evaluatorCount} targetGroupCount={store.config.targetGroupCount} />
         </div>
       )}
     </div>
@@ -1382,12 +1382,20 @@ function StepGenerate({store,setStore}){
 }
 
 // Recompute composition label after edits/moves.
-function recomposition(board,separateByType){
+function boardSizeNote(groupCount,targetGroupCount){
+  const MIN_BOARD=4;
+  const target=targetGroupCount||4;
+  if(groupCount<MIN_BOARD)return `only ${groupCount} group(s)`;
+  if(groupCount>target+1)return `oversized (${groupCount} groups)`;
+  return null;
+}
+function recomposition(board,separateByType,targetGroupCount){
   const t=board.groups.filter(g=>g.type==="Thesis").length;
   const p=board.groups.filter(g=>g.type!=="Thesis").length;
   board.composition=`${t}T+${p}P`;
   board.compositionOk=separateByType?(t===0||p===0):isPreferredComposition(t,p);
   board.cells=[...new Set(board.groups.map(g=>g.cell))];
+  board.sizeNote=boardSizeNote(board.groups.length,targetGroupCount);
 }
 
 function nextBoardId(boards){
@@ -1631,7 +1639,7 @@ function ManualGroupForm({result,board,onAdd,onCancel}){
   );
 }
 
-function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
+function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount,targetGroupCount}){
   const boards=result.boards;
   const tierOf=(f)=> Object.prototype.hasOwnProperty.call(tierOverrides,f.id)?tierOverrides[f.id]:f.tier;
   const [showManualForm,setShowManualForm]=useState(false);
@@ -1688,31 +1696,31 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
       requiredChanges:"",
     });
     board.sizeNote="";
-    recomposition(board,r.separateByType);
+    recomposition(board,r.separateByType,targetGroupCount);
   });
 
   const moveGroup=(fromBi,gi,toBi)=>update(r=>{
     if(toBi==="TEMP"){
       const [g]=r.boards[fromBi].groups.splice(gi,1);
       r.temporary.push({group:{groupId:g.groupId,title:g.title,type:g.type,students:g.students,supervisor:g.supervisor,coSupervisor:g.coSupervisor,cell:g.cell,publicId:g.publicId},reason:"Moved manually by admin."});
-      recomposition(r.boards[fromBi],r.separateByType);
+      recomposition(r.boards[fromBi],r.separateByType,targetGroupCount);
     } else {
       const ti=+toBi;
       const [g]=r.boards[fromBi].groups.splice(gi,1);
       r.boards[ti].groups.push(g);
-      recomposition(r.boards[fromBi],r.separateByType); recomposition(r.boards[ti],r.separateByType);
+      recomposition(r.boards[fromBi],r.separateByType,targetGroupCount); recomposition(r.boards[ti],r.separateByType,targetGroupCount);
     }
   });
 
   const restoreTemp=(ti,toBi)=>update(r=>{
     const [t]=r.temporary.splice(ti,1);
     const g={...t.group};
-    r.boards[+toBi].groups.push(g); recomposition(r.boards[+toBi],r.separateByType);
+    r.boards[+toBi].groups.push(g); recomposition(r.boards[+toBi],r.separateByType,targetGroupCount);
   });
 
   // Permanently remove a group from a board (deleted from the schedule, not
   // routed to Temporary).
-  const removeGroup=(bi,gi)=>update(r=>{ r.boards[bi].groups.splice(gi,1); recomposition(r.boards[bi],r.separateByType); });
+  const removeGroup=(bi,gi)=>update(r=>{ r.boards[bi].groups.splice(gi,1); recomposition(r.boards[bi],r.separateByType,targetGroupCount); });
   // Remove a group sitting on the Temporary board.
   const removeTemp=(ti)=>update(r=>{ r.temporary.splice(ti,1); });
 
@@ -1737,7 +1745,7 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount}){
     setExtForm(null);
   };
 
-  const setGroupField=(bi,gi,field,val)=>update(r=>{ r.boards[bi].groups[gi][field]=val; if(field==="type")recomposition(r.boards[bi],r.separateByType); });
+  const setGroupField=(bi,gi,field,val)=>update(r=>{ r.boards[bi].groups[gi][field]=val; if(field==="type")recomposition(r.boards[bi],r.separateByType,targetGroupCount); });
 
   // Board number (boardId, e.g. "B01") — distinct from the free-text display name.
   const setBoardId=(bi,val)=>update(r=>{
@@ -2078,8 +2086,8 @@ function TitleRequestModal({slug,board,group,onClose}){
               <div className="curtitle">{group.title}</div>
             </div>
             <div className="field" style={{marginTop:12}}>
-              <label>Your Green University email</label>
-              <input type="email" autoFocus value={email} placeholder={`name@cse.${GUB_EMAIL_DOMAIN}`}
+              <label>Your Email</label>
+              <input type="email" autoFocus value={email}
                 onChange={e=>setEmail(e.target.value)} autoComplete="email" />
             </div>
             <div className="field" style={{marginTop:12}}>
@@ -2088,7 +2096,7 @@ function TitleRequestModal({slug,board,group,onClose}){
             </div>
             <div className="field" style={{marginTop:12}}>
               <label>Reason (optional)</label>
-              <input value={reason} maxLength={500} placeholder="e.g. Supervisor suggested a clearer title"
+              <input value={reason} maxLength={500}
                 onChange={e=>setReason(e.target.value)} />
             </div>
             {err && <div className="errbox">{err}</div>}
