@@ -1801,7 +1801,9 @@ function EditableBoards({result,faculty,tierOverrides,update,evaluatorCount,targ
                 <span className="pill" style={{padding:"3px 8px"}}>pairing {b.pairingRule}</span>
                 {b.pairingRule==="manual" && b.groups.length===0
                   ? <span className="pill" style={{padding:"3px 8px",background:"var(--moss-100)",borderColor:"#bcd3c3",color:"var(--moss-700)"}}>Manual details</span>
-                  : b.sizeNote && b.pairingRule!=="manual" && <span className="pill" style={{padding:"3px 8px",background:"#fdf6f1",borderColor:"#e6c3ad",color:"var(--clay)"}}>⚠ {b.sizeNote}</span>}
+                  : b.pairingRule!=="manual" && boardSizeNote(b.groups.length,targetGroupCount)
+                    ? <span className="pill" style={{padding:"3px 8px",background:"#fdf6f1",borderColor:"#e6c3ad",color:"var(--clay)"}}>⚠ {boardSizeNote(b.groups.length,targetGroupCount)}</span>
+                    : null}
                 {b.note && <span className="pill" style={{padding:"3px 8px"}}>📝 {b.note}</span>}
                 <button className="delboard" title="Delete this board (its groups move to Temporary)"
                   onClick={()=>{ if(confirm(`Delete ${boardName(b)}? Its ${b.groups.length} group(s) will move to the Temporary board for reassignment.`)) deleteBoard(bi); }}>
@@ -2350,7 +2352,7 @@ function PublicPortal(){
   return (
     <div className="wrap" style={{padding:"30px 22px 80px"}}>
       <div className="eyebrow">Student &amp; faculty portal</div>
-      <h1 style={{fontSize:30,margin:"6px 0 14px"}}>Defense Schedule</h1>
+      <h1 style={{fontSize:30,margin:"6px 0 14px"}}>Defense schedule</h1>
 
       {status==="loading" && <div className="card empty">Loading semesters…</div>}
       {status==="error" && <div className="card empty">Couldn't load schedules right now. Please refresh or try again shortly.</div>}
